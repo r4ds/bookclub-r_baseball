@@ -1,10 +1,22 @@
 # The Baseball Datasets
 
+
 **Learning objectives:**
 
-- THESE ARE NICE TO HAVE BUT NOT ABSOLUTELY NECESSARY
+- Bookclub overivew
+- Introduction to data sets we will use for the book
 
-## SLIDE 1 {-}
 
-- ADD SLIDES AS SECTIONS (`##`).
-- TRY TO KEEP THEM RELATIVELY SLIDE-LIKE; THESE ARE NOTES, NOT THE BOOK ITSELF.
+## Lahman Databse {-}
+
+- 
+
+## Retrosheet Game-by-Game Data
+
+## Retrosheet Play-by-Play Data
+
+## Pitch-by-Pitch Data
+
+## Data used in the book
+
+## Exercises
