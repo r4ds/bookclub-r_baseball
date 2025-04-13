@@ -10,5 +10,6 @@ Depends:
 Imports: 
     bookdown,
     rmarkdown,
+    tidyverse,
     remotes
 Encoding: UTF-8
