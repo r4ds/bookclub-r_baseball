@@ -11,5 +11,7 @@ Imports:
     bookdown,
     rmarkdown,
     tidyverse,
-    remotes
+    remotes,
+    Lahman,
+    baseballr
 Encoding: UTF-8
