@@ -7,17 +7,17 @@
 
 - Introduction to data sets we will use for the book
 
-## Overivew {-}
+## Overview {-}
 
 - Book: [Analyzing Baseball Data with R](https://beanumber.github.io/abdwr3e/)
 - Code Repo : [adbwr3edata](https://github.com/beanumber/abdwr3edata)
-- Goal: Learn how to answer baseball questions with data by learning how to:
+- Goal: Learn how to answer baseball questions by learning how to:
 
-      - Access baseball data
+   - Access baseball data
       
-      - Manipulate and analyze baseball data with R and tidyverse.
+   - Manipulate and analyze baseball data with R and tidyverse.
       
-      - Communicate results with quarto and shiny 
+   - Communicate results with quarto and shiny 
       
       
 ## Baseball terms {-}
@@ -46,7 +46,7 @@ Some useful resources for defintions of Baseball terms and statistics:
    
    - Teams : Team performance by year.
    
-- Easy to use from `R` :
+## Lahman from `R` {-}
 
 
 ```{r}
@@ -55,7 +55,7 @@ library(tidyverse)
 Teams |>
   slice_tail(n = 3)
 ```
-## Example Uses for Lahman 
+## Example Uses for Lahman {-}
  
 - Good for answering questions like:
    - What is the average number of home runs per game recorded in each decade? Does the rate of strikeouts show any correlation with the rate of home runs? (*Teams* table)
@@ -65,7 +65,7 @@ Teams |>
    - Which player had the most walks per plate appearance (BB%) in a given year? (*Batting* table)
 
 
-## Retrosheet Game-by-Game Data
+## Retrosheet Game-by-Game Data {-}
 
 - Game logs going back to 1871
 
@@ -79,7 +79,7 @@ Teams |>
 
 - Example question: In which months are home runs more likely to occur?
 
-## Retrosheet Play-by-Play Data
+## Retrosheet Play-by-Play Data {-}
 
 - Event files provided for each game since 1913
 
@@ -97,15 +97,15 @@ Translation:
 >In the 3rd inning, with the visiting team (Blue Jays) at bat, Bo Bichette hit a double to center field. The ball was lined to center and involved both the center and right fielders. Due to a misplay or error, the batter advanced beyond the expected base. Additionally, a runner who was on first base advanced to third base on the play.
  `
 
-## Accessing the data
+## Accessing the data {-}
 
-- Retrosheet provides some (dos!) tools for parsing the data
+- Retrosheet provides some (DOS!) tools for parsing the data
 
 - Instead, book recommends using tools presented in Appendix A
 
 - Example Question: What is the Major league batting average when the ball/strike count is 0-2? What about on 2-0?
 
-## Pitch-by-Pitch Data
+## Pitch-by-Pitch Data {-}
 
 ![PitchLocation](images/pitchlocation.png)
 
@@ -115,7 +115,7 @@ Translation:
 
 - Example question: What are the chances of a successful steal when the pitcher throws a fastball compared to when a curve is delivered?
 
-## Statcast
+## Statcast {-}
 
 - Tracks more than PITCHf/x including movement of the individual players
 
@@ -141,7 +141,7 @@ noah <- statcast_search(start_date = "2016-04-06",
 
 - Example Question: How frequently do MLB teams employ infield shifts?
 
-## Other data on baseballr
+## Other data on baseballr {-}
 
 - Scrape extensive data frorm [Baseball Reference](https://www.baseball-reference.com)  and [FanGraphs](https://www.fangraphs.com)  
 
@@ -152,10 +152,24 @@ bref_standings_on_date("2025-04-12", "NL East", from = FALSE)
 
 - Retrosheet - but needs a special CLI (See Appendix A)
 
-## Data used in the book
+## Data used in the book {-}
 
 - Lahman data from `Lahman` package
 - Small examples for other data are in `abdwr3edata` package
 - Large examples will require downloading data seperately.
 
-## Exercises
+## Exercises {-}
+
+### Exercise 1: {-}
+
+This chapter has given an overview of the Lahman database, the Retrosheet game logs, the Retrosheet play-by-play files, the PITCHf/x database, and the Statcast database. Describe the relevant data among these four databases that can be used to answer the following baseball questions.
+
+How has the rate of walks (per team for nine innings) changed over the history of baseball?
+What fraction of baseball games in 1968 were shutouts? Compare this fraction with the fraction of shutouts in the 2012 baseball season.
+
+What percentage of first pitches are strikes? If the count is 2-0, what fraction of the pitches are strikes?
+
+Which players are most likely to hit groundballs? Of these players, compare the speeds at which these groundballs are hit.
+
+Is it easier to steal second base or third base? (Compare the fraction of successful steals of second base with the fraction of successful steals of third base.)
+
