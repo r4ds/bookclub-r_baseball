@@ -131,7 +131,7 @@ install.packages("remotes")
 remotes::install_github("BillPetti/baseballr")
 ```
 
-```{r}
+```{r, eval = FALSE}
 library(baseballr)
 noah <- statcast_search(start_date = "2016-04-06",
                           end_date = "2016-04-15", 
@@ -145,7 +145,7 @@ noah <- statcast_search(start_date = "2016-04-06",
 
 - Scrape extensive data frorm [Baseball Reference](https://www.baseball-reference.com)  and [FanGraphs](https://www.fangraphs.com)  
 
-```{r}
+```{r, eval = FALSE}
 library(baseballr)
 bref_standings_on_date("2025-04-12", "NL East", from = FALSE)
 ```
