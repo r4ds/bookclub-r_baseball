@@ -9,5 +9,9 @@ Depends:
     R (>= 3.1.0)
 Imports: 
     bookdown,
-    rmarkdown
+    rmarkdown,
+    tidyverse,
+    remotes,
+    Lahman,
+    baseballr
 Encoding: UTF-8
