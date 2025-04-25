@@ -378,7 +378,7 @@ Batting_decade |>
 - [A Modern Dive into R and the Tidyverse](https://moderndive.com/)
 - [R for the Rest of Us](https://book.rfortherestofus.com/)
 - [R Packages](https://r-pkgs.org/)
-- [Happy Git and GitHub for the useR](https://happygitwithr.com/)
+- [Happy Git and GitHub for the useR](https://happygitwithr.com)
 
 
 
