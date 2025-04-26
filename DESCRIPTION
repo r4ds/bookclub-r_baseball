@@ -8,14 +8,15 @@ URL: https://r4ds.github.io/bookclub-r_baseball,
 Depends:
     R (>= 3.1.0)
 Imports:
-    abdwr3edata
+    abdwr3edata,
     bookdown,
-    rmarkdown,
-    tidyverse,
-    remotes,
-    Lahman,
     baseballr,
-    here
-Remotes: beanumber/abdwr3edata
+    here,
+    Lahman,
+    remotes,
+    rmarkdown,
+    tidyverse
+Remotes: 
+    beanumber/abdwr3edata
 Encoding: UTF-8
 RoxygenNote: 7.3.2
