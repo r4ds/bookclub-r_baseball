@@ -15,7 +15,9 @@ Imports:
     Lahman,
     remotes,
     rmarkdown,
-    tidyverse
+    tidyverse,
+    ggrepel,
+    gt
 Remotes: 
     beanumber/abdwr3edata
 Encoding: UTF-8

@@ -2,9 +2,1276 @@
 
 **Learning objectives:**
 
-- THESE ARE NICE TO HAVE BUT NOT ABSOLUTELY NECESSARY
+- Introduce sabermetrics
+- Establish Pythagorean win-loss
+- Implement linear regression models
 
-## SLIDE 1 {-}
+```{r, message = FALSE, warning = FALSE}
+library("abdwr3edata")
+library("ggrepel")
+library("gt")
+library("Lahman")
+library("tidyverse")
 
-- ADD SLIDES AS SECTIONS (`##`).
-- TRY TO KEEP THEM RELATIVELY SLIDE-LIKE; THESE ARE NOTES, NOT THE BOOK ITSELF.
+crcblue <- "#2905A1"
+```
+
+<details>
+<summary>Session Info</summary>
+```{r}
+sessionInfo()
+```
+</details>
+
+## Recency
+
+Following the textbook's lead, let us find the most recent data in the `Lahman` package.
+
+```{r}
+Teams |>
+  select(yearID, teamID, franchID, G, W, L, R, RA) |>
+  slice_tail(n = 5)
+```
+
+## Shortened Seasons
+
+Some MLB seasons were shorter than others.
+
+```{r, echo = FALSE, eval = TRUE}
+game_count_df <- Teams |>
+  select(yearID, G) |>
+  group_by(yearID, G) |>
+  mutate(obs_count = n()) |>
+  ungroup() |>
+  distinct() |>
+  
+  # compute mode by year
+  group_by(yearID) |>
+  slice_max(order_by = obs_count, n = 1) |>
+  ungroup()
+```
+
+```{r, echo = FALSE, eval = TRUE}
+game_count_df |>
+  filter(yearID > 1973) |>
+  mutate(season_bool = ifelse(G == 162, "normal season", "shortened season")) |>
+  ggplot(aes(x = yearID, y = G)) +
+  geom_bar(aes(fill = season_bool),
+           stat = "identity") +
+  labs(title = "Length of MLB Seasons by Year",
+       subtitle = "past 30 seasons",
+       caption = "data source: Lahman",
+       x = "season",
+       y = "number of games played\nby most teams") +
+  scale_fill_manual(values = c("#AAAAAA", "#2905A1")) +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        legend.title=element_blank())
+```
+
+<details>
+<summary>graph code</summary>
+
+```{r, echo = TRUE, eval = FALSE}
+game_count_df <- Teams |>
+  select(yearID, G) |>
+  group_by(yearID, G) |>
+  mutate(obs_count = n()) |>
+  ungroup() |>
+  distinct() |>
+  
+  # compute mode by year
+  group_by(yearID) |>
+  slice_max(order_by = obs_count, n = 1) |>
+  ungroup()
+```
+
+```{r, echo = TRUE, eval = FALSE}
+game_count_df |>
+  filter(yearID > 1973) |>
+  mutate(season_bool = ifelse(G == 162, "normal season", "shortened season")) |>
+  ggplot(aes(x = yearID, y = G)) +
+  geom_bar(aes(fill = season_bool),
+           stat = "identity") +
+  labs(title = "Length of MLB Seasons by Year",
+       subtitle = "past 30 seasons",
+       caption = "data source: Lahman",
+       x = "season",
+       y = "number of games played\nby most teams") +
+  scale_fill_manual(values = c("#AAAAAA", "#2905A1")) +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        legend.title=element_blank())
+```
+</details>
+
+* 1981: strike-shortened season
+* 1994: strike-shortened season
+* 1995: strike-shortened season
+* 2000: pandemic-shortened season
+
+### Fun Fact!
+
+According to Redditor [u/pnabf](https://old.reddit.com/r/baseball/comments/1kcc9za/whats_your_favorite_stat_or_piece_of_trivia_that/mq1mf43/)
+
+> The Braves, who have 4 championships in their franchise history, have never won a WS when playing 162 games in a season
+
+Let us check that!
+
+```{r}
+Teams |>
+  filter(franchID == "ATL") |>
+  filter(WSWin == "Y") |>
+  select(franchID, yearID, WSWin, G)
+```
+
+* 1995: strike-shortened season
+* 2021: Sept 16 COL@ATL game was [canceled](https://www.mlb.com/news/rockies-braves-september-16-game-postponed) due to rain
+
+
+## Rate Statistics
+
+In baseball statistics, consider the use of both **count statistics** and **rate statistics**
+
+* count statistics (for example): $AB$, $ER$, $H$, $IP$
+* rate statistics (for example):
+
+$$BA = \frac{H}{AB}, \quad ERA = \frac{ER}{IP} \cdot 9$$
+
+
+### Win Percentage
+
+```{r}
+ch4_data <- Teams |>
+  filter(yearID >= 1998, yearID != 2020) |>
+  select(yearID, lgID, teamID, G, W, L, R, RA, DivWin, WCWin) |>
+  
+  # run differential
+  mutate(RD = R - RA) |>
+  
+  # win percentage
+  mutate(Wpct = W / (W + L)) |>
+  
+  # playoff win (Boolean)
+  mutate(playoff_bool = ifelse(
+    DivWin == "Y" | WCWin == "Y",
+    "made playoffs", "missed playoffs"
+  ))
+```
+
+
+## Correlation
+
+In short, we may want correlation values close to 1.0 or -1.0.
+
+### Offense
+
+```{r, echo = FALSE, eval = TRUE}
+cor_value = cor(ch4_data$R, ch4_data$Wpct,
+                use = "pairwise.complete.obs")
+
+subset_for_labels <- ch4_data |>
+  select(R, Wpct, playoff_bool, yearID, teamID) |>
+  group_by(playoff_bool) |>
+  mutate(highlight = ifelse(
+    R == max(R) | R == min(R),
+    1, 0
+  )) |>
+  ungroup() |>
+  filter(highlight == 1) |>
+  mutate(year_team = paste(yearID, teamID))
+
+ch4_data |>
+  ggplot(aes(x = R, y = Wpct)) +
+  geom_point(aes(color = playoff_bool)) +
+  geom_label(aes(x = R, y = Wpct, color = playoff_bool, label = year_team),
+             data = subset_for_labels) +
+  labs(title = "Win Percentage vs Runs Scored",
+       subtitle = paste0("correlation: r = ", round(cor_value, 4)),
+       caption = "1998 to 2023 seasons",
+       x = "runs scored",
+       y = "win percentage") +
+  scale_color_manual(values = c("#2905A1", "#AAAAAA")) +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        legend.title=element_blank())
+```
+
+<details>
+<summary>graph code</summary>
+```{r, echo = TRUE, eval = FALSE}
+cor_value = cor(ch4_data$R, ch4_data$Wpct,
+                use = "pairwise.complete.obs")
+
+subset_for_labels <- ch4_data |>
+  select(R, Wpct, playoff_bool, yearID, teamID) |>
+  group_by(playoff_bool) |>
+  mutate(highlight = ifelse(
+    R == max(R) | R == min(R),
+    1, 0
+  )) |>
+  ungroup() |>
+  filter(highlight == 1) |>
+  mutate(year_team = paste(yearID, teamID))
+
+ch4_data |>
+  ggplot(aes(x = R, y = Wpct)) +
+  geom_point(aes(color = playoff_bool)) +
+  geom_label(aes(x = R, y = Wpct, color = playoff_bool, label = year_team),
+             data = subset_for_labels) +
+  labs(title = "Win Percentage vs Runs Scored",
+       subtitle = paste0("correlation: r = ", round(cor_value, 4)),
+       caption = "1998 to 2023 seasons",
+       x = "runs scored",
+       y = "win percentage") +
+  scale_color_manual(values = c("#2905A1", "#AAAAAA")) +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        legend.title=element_blank())
+```
+</details>
+
+
+### Defense
+
+```{r, echo = FALSE, eval = TRUE}
+cor_value = cor(ch4_data$RA, ch4_data$Wpct,
+                use = "pairwise.complete.obs")
+
+subset_for_labels <- ch4_data |>
+  select(RA, Wpct, playoff_bool, yearID, teamID) |>
+  group_by(playoff_bool) |>
+  mutate(highlight = ifelse(
+    RA == max(RA) | RA == min(RA),
+    1, 0
+  )) |>
+  ungroup() |>
+  filter(highlight == 1) |>
+  mutate(year_team = paste(yearID, teamID))
+
+ch4_data |>
+  ggplot(aes(x = RA, y = Wpct)) +
+  geom_point(aes(color = playoff_bool)) +
+  geom_label(aes(x = RA, y = Wpct, color = playoff_bool, label = year_team),
+             data = subset_for_labels) +
+  labs(title = "Win Percentage vs Runs Allowed",
+       subtitle = paste0("correlation: r = ", round(cor_value, 4)),
+       caption = "1998 to 2023 seasons",
+       x = "runs allowed",
+       y = "win percentage") +
+  scale_color_manual(values = c("#2905A1", "#AAAAAA")) +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        legend.title=element_blank())
+```
+
+<details>
+<summary>graph code</summary>
+```{r, echo = TRUE, eval = FALSE}
+cor_value = cor(ch4_data$RA, ch4_data$Wpct,
+                use = "pairwise.complete.obs")
+
+subset_for_labels <- ch4_data |>
+  select(RA, Wpct, playoff_bool, yearID, teamID) |>
+  group_by(playoff_bool) |>
+  mutate(highlight = ifelse(
+    RA == max(RA) | RA == min(RA),
+    1, 0
+  )) |>
+  ungroup() |>
+  filter(highlight == 1) |>
+  mutate(year_team = paste(yearID, teamID))
+
+ch4_data |>
+  ggplot(aes(x = RA, y = Wpct)) +
+  geom_point(aes(color = playoff_bool)) +
+  geom_label(aes(x = RA, y = Wpct, color = playoff_bool, label = year_team),
+             data = subset_for_labels) +
+  labs(title = "Win Percentage vs Runs Allowed",
+       subtitle = paste0("correlation: r = ", round(cor_value, 4)),
+       caption = "1998 to 2023 seasons",
+       x = "runs allowed",
+       y = "win percentage") +
+  scale_color_manual(values = c("#2905A1", "#AAAAAA")) +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        legend.title=element_blank())
+```
+</details>
+
+
+### Run Differential
+
+```{r, echo = FALSE, eval = TRUE}
+cor_value = cor(ch4_data$RD, ch4_data$Wpct,
+                use = "pairwise.complete.obs")
+
+subset_for_labels <- ch4_data |>
+  select(RD, Wpct, playoff_bool, yearID, teamID) |>
+  group_by(playoff_bool) |>
+  mutate(highlight = ifelse(
+    RD == max(RD) | RD == min(RD),
+    1, 0
+  )) |>
+  ungroup() |>
+  filter(highlight == 1) |>
+  mutate(year_team = paste(yearID, teamID))
+
+ch4_data |>
+  ggplot(aes(x = RD, y = Wpct)) +
+  geom_point(aes(color = playoff_bool)) +
+  geom_label(aes(x = RD, y = Wpct, color = playoff_bool, label = year_team),
+             data = subset_for_labels) +
+  labs(title = "Win Percentage vs Run Differential",
+       subtitle = paste0("correlation: r = ", round(cor_value, 4)),
+       caption = "1998 to 2023 seasons",
+       x = "run differential",
+       y = "win percentage") +
+  scale_color_manual(values = c("#2905A1", "#AAAAAA")) +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        legend.title=element_blank())
+```
+
+<details>
+<summary>graph code</summary>
+```{r, echo = TRUE, eval = FALSE}
+cor_value = cor(ch4_data$RD, ch4_data$Wpct,
+                use = "pairwise.complete.obs")
+
+subset_for_labels <- ch4_data |>
+  select(RD, Wpct, playoff_bool, yearID, teamID) |>
+  group_by(playoff_bool) |>
+  mutate(highlight = ifelse(
+    RD == max(RD) | RD == min(RD),
+    1, 0
+  )) |>
+  ungroup() |>
+  filter(highlight == 1) |>
+  mutate(year_team = paste(yearID, teamID))
+
+ch4_data |>
+  ggplot(aes(x = RD, y = Wpct)) +
+  geom_point(aes(color = playoff_bool)) +
+  geom_label(aes(x = RD, y = Wpct, color = playoff_bool, label = year_team),
+             data = subset_for_labels) +
+  labs(title = "Win Percentage vs Run Differential",
+       subtitle = paste0("correlation: r = ", round(cor_value, 4)),
+       caption = "1998 to 2023 seasons",
+       x = "run differential",
+       y = "win percentage") +
+  scale_color_manual(values = c("#2905A1", "#AAAAAA")) +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        legend.title=element_blank())
+```
+</details>
+
+
+## Linear Regression
+
+We will proceed by exploring a possible relationship between the run differential and the win percentage.
+
+$$W_{\text{pct}} = \beta_{0} + \beta_{1}*RD + \epsilon$$
+
+In `R`, we make a **linear model** using the `lm` function.
+
+```{r}
+lin_fit <- lm(Wpct ~ RD, data = ch4_data)
+lin_fit #print coefficients
+```
+
+In `ggplot2`, we visualize the **best-fit line** using `geom_smooth` (with the `method = 'lm'` parameter).
+
+```{r, echo = FALSE, eval = TRUE}
+ch4_data |>
+  ggplot(aes(x = RD, y = Wpct)) +
+  geom_point(color = "#AAAAAA") +
+  geom_smooth(color = "#2905A1",
+              formula = "y ~ x",
+              method = "lm",
+              se = FALSE) +
+  labs(title = "Win Percentage vs Run Differential",
+       subtitle = "y = 0.5 + 0.0006x",
+       caption = "1998 to 2023 seasons",
+       x = "run differential",
+       y = "win percentage") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        legend.title=element_blank())
+```
+
+<details>
+<summary>graph code</summary>
+```{r, echo = TRUE, eval = FALSE}
+ch4_data |>
+  ggplot(aes(x = RD, y = Wpct)) +
+  geom_point(color = "#AAAAAA") +
+  geom_smooth(color = "#2905A1",
+              formula = "y ~ x",
+              method = "lm",
+              se = FALSE) +
+  labs(title = "Win Percentage vs Run Differential",
+       subtitle = "y = 0.5 + 0.0006x",
+       caption = "1998 to 2023 seasons",
+       x = "run differential",
+       y = "win percentage") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        legend.title=element_blank())
+```
+</details>
+
+$$\beta_{0} = 0.5$$
+
+* $RD = 0 \rightarrow W_{\text{pct}} = 0.5$
+* Over 162 games: 81 wins
+
+$$\beta_{1} = 0.0006$$
+
+* $RD = +10 \rightarrow W_{\text{pct}} = 0.506$
+* Over 162 games: 82 wins
+
+
+### Residuals
+
+**Residuals** are the differences between the predictions (aka fitted data) and the true values (aka response values).
+
+```{r}
+ch4_data <- ch4_data |>
+  mutate(preds = predict(lin_fit, newdata = ch4_data),
+         resid = Wpct - preds)
+```
+
+```{r, echo = FALSE, eval = TRUE}
+oddities <- ch4_data |>
+  arrange(desc(resid))
+oddities <- rbind(head(oddities, 3), tail(oddities, 3))
+
+ch4_data |>
+  ggplot(aes(x = RD, y = resid)) +
+  geom_point(color = "#AAAAAA") +
+  geom_hline(color = "#2905A1", linetype = 3, yintercept = 0) +
+  geom_point(aes(x = RD, y = resid),
+             color = "#2905A1", data = oddities) +
+  ggrepel::geom_text_repel(aes(x = RD, y = resid,
+                               label = paste(teamID, yearID)),
+                           color = "#2905A1", data = oddities) +
+  labs(title = "Linear Regression Residuals",
+       subtitle = "win percent minus predictions",
+       caption = "1998 to 2023 seasons",
+       x = "run differential",
+       y = "residuals") +
+  theme_minimal()
+```
+
+<details>
+<summary>graph code</summary>
+```{r, echo = FALSE, eval = TRUE}
+oddities <- ch4_data |>
+  arrange(desc(resid))
+oddities <- rbind(head(oddities, 3), tail(oddities, 3))
+
+ch4_data |>
+  ggplot(aes(x = RD, y = resid)) +
+  geom_point(color = "#AAAAAA") +
+  geom_hline(color = "#2905A1", linetype = 3, yintercept = 0) +
+  geom_point(aes(x = RD, y = resid),
+             color = "#2905A1", data = oddities) +
+  ggrepel::geom_text_repel(aes(x = RD, y = resid,
+                               label = paste(teamID, yearID)),
+                           color = "#2905A1", data = oddities) +
+  labs(title = "Linear Regression Residuals",
+       subtitle = "win percent minus predictions",
+       caption = "1998 to 2023 seasons",
+       x = "run differential",
+       y = "residuals") +
+  theme_minimal()
+```
+</details>
+
+```{r, echo = FALSE, eval = TRUE}
+oddities |>
+  select(teamID, yearID, Wpct, preds, resid) |>
+  mutate(desc = ifelse(resid > 0, "performed better", "performed worse")) |>
+  gt() |>
+  cols_align(align = "center") |>
+  fmt_number(columns = c(Wpct, preds, resid),
+             decimals = 2) |>
+  tab_header(title = "Residuals",
+             subtitle = "top 3 and bottom 3")
+```
+
+<details>
+<summary>table code</summary>
+```{r, echo = TRUE, eval = FALSE}
+oddities |>
+  select(teamID, yearID, Wpct, preds, resid) |>
+  mutate(desc = ifelse(resid > 0, "performed better", "performed worse")) |>
+  gt() |>
+  cols_align(align = "center") |>
+  fmt_number(columns = c(Wpct, preds, resid),
+             decimals = 2) |>
+  tab_header(title = "Residuals",
+             subtitle = "top 3 and bottom 3")
+```
+</details>
+
+#### Balance
+
+For linear models (through least-squares optimization), the average of the residuals should be zero:
+
+```{r}
+mean(ch4_data$resid)
+```
+
+#### RMSE
+
+The **root mean square error** acts similarly to a standard deviation to help measure along the variation of our data.
+
+```{r, echo = FALSE, eval = TRUE}
+rmse <- sqrt(mean(ch4_data$resid^2))
+
+ch4_data |>
+  ggplot(aes(x = resid)) +
+  geom_density(linewidth = 3) +
+  geom_vline(color = "#2905A1",
+             linetype = 3,
+             linewidth = 2,
+             xintercept = c(-2*rmse, -1*rmse, 0, rmse, 2*rmse)) +
+  labs(title = "Distribution of Residuals",
+       subtitle = "About 68% of residuals within one RMSE\nAbout 95% of residuals within two RMSE",
+       caption = paste("RMSE = ", round(rmse, 4)),
+       x = "residuals") +
+  theme_minimal()
+```
+
+<details>
+<summary>graph code</summary>
+```{r, echo = TRUE, eval = FALSE}
+rmse <- sqrt(mean(ch4_data$resid^2))
+
+ch4_data |>
+  ggplot(aes(x = resid)) +
+  geom_density(linewidth = 3) +
+  geom_vline(color = "#2905A1",
+             linetype = 3,
+             linewidth = 2,
+             xintercept = c(-2*rmse, -1*rmse, 0, rmse, 2*rmse)) +
+  labs(title = "Distribution of Residuals",
+       subtitle = "About 68% of residuals are within one RMSE\nAbout 95% of residuals are within two RMSE",
+       caption = paste("RMSE = ", round(rmse, 4)),
+       x = "residuals") +
+  theme_minimal()
+```
+</details>
+
+
+### Discussion
+
+```{r, echo = FALSE, eval = TRUE}
+ch4_data |>
+  ggplot(aes(x = RD, y = Wpct)) +
+  geom_point(color = "#AAAAAA") +
+  geom_smooth(color = "#2905A1",
+              formula = "y ~ x",
+              method = "lm",
+              se = FALSE) +
+  labs(title = "Win Percentage vs Run Differential",
+       subtitle = "y = 0.5 + 0.0006x",
+       caption = "1998 to 2023 seasons",
+       x = "run differential",
+       y = "win percentage") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        legend.title=element_blank())
+```
+
+* What about extreme performances?
+* Should we relate count statistics to a rate statistic?
+* Can we make predictions during the season?
+
+
+## Pythagorean Formula
+
+> Bill James, regarded as the godfather of sabermetrics, empirically derived the following non-linear formula to estimate winning percentage, called the Pythagorean expectation.
+
+$$\widehat{W_{\text{pct}}} = \frac{R^{2}}{R^{2} + {RA^{2}}}$$
+
+```{r}
+ch4_data <- ch4_data |>
+  mutate(Wpct_pyt = R^2 / (R^2 + RA^2),
+         resid_pyt = Wpct - Wpct_pyt)
+
+# RMSE with exponent of 2
+sqrt(mean(ch4_data$resid_pyt^2))
+```
+
+### What should the exponent be?
+
+$$\frac{W}{W+L} = W_{\text{pct}} \approx \widehat{W_{\text{pct}}} = \frac{R^{k}}{R^{k} + {RA^{k}}}$$
+
+<details>
+<summary>algebra</summary>
+
+$$\begin{array}{rcl}
+  \frac{W}{W+L} = W_{\text{pct}} & \approx & \widehat{W_{\text{pct}}} = \frac{R^{k}}{R^{k} + {RA^{k}}} \\
+  \frac{W}{W+L} & \approx &  \frac{R^{k}}{R^{k} + {RA^{k}}} \\
+  WR^{k} + WRA^{k} & \approx & WR^{k} + LR^{k} \\
+  WRA^{k} & \approx & LR^{k} \\
+  \frac{W}{L}\cdot RA^{k} & \approx & R^{k} \\
+  \frac{W}{L} & \approx & \frac{R^{k}}{RA^{k}} \\
+  \frac{W}{L} & \approx & \left(\frac{R}{RA}\right)^{k} \\
+  \ln\frac{W}{L} & \approx & \ln\left(\frac{R}{RA}\right)^{k} \\
+\end{array}$$
+
+</details>
+
+$$\ln\frac{W}{L} \approx k\ln\left(\frac{R}{RA}\right)$$
+
+```{r}
+ch4_data <- ch4_data |>
+  mutate(logWratio = log(W/L),
+         logRratio = log(R/RA))
+pyt_fit <- lm(logWratio ~ 0 + logRratio, data = ch4_data)
+pyt_fit$coefficients
+```
+
+```{r}
+ch4_data <- ch4_data |>
+  mutate(Wpct_pyt = R^1.835 / (R^1.835 + RA^1.835),
+         resid_pyt = Wpct - Wpct_pyt)
+
+# RMSE with exponent of 1.835
+sqrt(mean(ch4_data$resid_pyt^2))
+```
+
+
+### Luck
+
+We can find the expected number of wins for a full season by multiplying the estimated win percentage (from the Pythagorean formula with an exponent of 1.835) by 162 games.
+
+```{r, echo = FALSE, eval = TRUE}
+ch4_data |>
+  filter(yearID == 2011) |>
+  mutate(W_pyt = Wpct_pyt*162) |>
+  select(teamID, W, W_pyt, playoff_bool) |>
+  mutate(diff = W - W_pyt) |>
+  mutate(desc = ifelse(diff > 0,
+                       "lucky", "unlucky")) |>
+  arrange(desc(diff)) |>
+  gt() |>
+  cols_align(align = "center") |>
+  data_color(columns = diff,
+             palette = "viridis") |>
+  data_color(columns = playoff_bool,
+             palette = "viridis",
+             reverse = TRUE) |>
+  fmt_number(columns = c(W_pyt, diff),
+             decimals = 1) |>
+  tab_header(title = "2011 Season",
+             subtitle = "Performance vs Pythag Expectation")
+```
+
+<details>
+<summary>table code</summary>
+```{r, echo = TRUE, eval = FALSE}
+ch4_data |>
+  filter(yearID == 2011) |>
+  mutate(W_pyt = Wpct_pyt*162) |>
+  select(teamID, W, W_pyt, playoff_bool) |>
+  mutate(diff = W - W_pyt) |>
+  mutate(desc = ifelse(diff > 0,
+                       "lucky", "unlucky")) |>
+  arrange(desc(diff)) |>
+  gt() |>
+  cols_align(align = "center") |>
+  data_color(columns = diff,
+             palette = "viridis") |>
+  data_color(columns = playoff_bool,
+             palette = "viridis",
+             reverse = TRUE) |>
+  fmt_number(columns = c(W_pyt, diff),
+             decimals = 1) |>
+  tab_header(title = "2011 Season",
+             subtitle = "Performance vs Pythag Expectation")
+```
+</details>
+
+```{r, echo = FALSE, eval = TRUE}
+ch4_data |>
+  filter(yearID == 2023) |>
+  mutate(W_pyt = Wpct_pyt*162) |>
+  select(teamID, W, W_pyt, playoff_bool) |>
+  mutate(diff = W - W_pyt) |>
+  mutate(desc = ifelse(diff > 0,
+                       "lucky", "unlucky")) |>
+  arrange(desc(diff)) |>
+  gt() |>
+  cols_align(align = "center") |>
+  data_color(columns = diff,
+             palette = "viridis") |>
+  data_color(columns = playoff_bool,
+             palette = "viridis",
+             reverse = TRUE) |>
+  fmt_number(columns = c(W_pyt, diff),
+             decimals = 1) |>
+  tab_header(title = "2023 Season",
+             subtitle = "Performance vs Pythag Expectation")
+```
+
+
+## Case Studies
+
+### 2011 Red Sox
+
+```{r}
+BOS_2011 <- retro_gl_2011 |> #Retrosheet data (via abdwr3edata)
+  filter(HomeTeam == "BOS" | VisitingTeam == "BOS") |>
+  select(VisitingTeam, HomeTeam, VisitorRunsScored, HomeRunsScore) |>
+  mutate(ScoreDiff = ifelse(HomeTeam == "BOS", 
+    HomeRunsScore - VisitorRunsScored, 
+    VisitorRunsScored - HomeRunsScore), 
+    W_bool = ifelse(ScoreDiff > 0, "win", "loss"))
+```
+
+```{r, echo = FALSE, eval = TRUE}
+BOS_2011 |>
+  ggplot(aes(x = ScoreDiff)) +
+  geom_density(aes(color = W_bool,
+                   fill = W_bool),
+               alpha = 0.75,
+               linewidth = 3) +
+  labs(title = "2011 Boston Red Sox",
+       subtitle = "Comparing win and loss margins",
+       caption = "data source: Retrosheet",
+       x = "score difference") +
+  scale_color_manual(values = c("#BD3039", "#0C2340")) +
+  scale_fill_manual(values = c("#0C2340", "#BD3039")) +
+  theme_minimal() +
+  theme(legend.position = "right",
+        legend.title=element_blank())
+```
+
+<details>
+<summary>graph code</summary>
+```{r, echo = TRUE, eval = FALSE}
+BOS_2011 |>
+  ggplot(aes(x = ScoreDiff)) +
+  geom_density(aes(color = W_bool,
+                   fill = W_bool),
+               alpha = 0.75,
+               linewidth = 3) +
+  labs(title = "2011 Boston Red Sox",
+       subtitle = "Comparing win and loss margins",
+       caption = "data source: Retrosheet",
+       x = "score difference") +
+  scale_color_manual(values = c("#BD3039", "#0C2340")) +
+  scale_fill_manual(values = c("#0C2340", "#BD3039")) +
+  theme_minimal() +
+  theme(legend.position = "right",
+        legend.title=element_blank())
+```
+</details>
+
+> The 2011 Red Sox had their victories decided by a larger margin than their losses (4.3 vs -3.5 runs on average), leading to their underperformance of the Pythagorean prediction
+
+### Clutch Performance
+
+Here, we are tracking performance in games won with a difference of just one run.
+
+```{r, echo = FALSE, eval = TRUE}
+one_run_wins <- retro_gl_2011 |>
+  select(VisitingTeam, HomeTeam, VisitorRunsScored, HomeRunsScore) |>
+  mutate(winner = ifelse(HomeRunsScore > VisitorRunsScored, HomeTeam, VisitingTeam),
+    diff = abs(VisitorRunsScored - HomeRunsScore)
+  ) |>
+  filter(diff == 1) |>
+  group_by(winner) |>
+  summarize(one_run_w = n())
+
+teams2011 <- ch4_data |>
+  filter(yearID == 2011) |>
+  mutate(teamID = if_else(teamID == "LAA", "ANA", as.character(teamID))
+  ) |>
+  inner_join(one_run_wins, by = c("teamID" = "winner"))
+
+teams2011 |>
+  mutate(luck = ifelse(resid_pyt > 0, "lucky", "unlucky")) |>
+  ggplot(aes(x = one_run_w, y = resid_pyt)) +
+  #geom_point() +
+  geom_text_repel(aes(color = luck, label = teamID)) + 
+  xlab("One run wins") + ylab("Pythagorean residuals") +
+  labs(title = "Pythagorean Residuals versus One-Run Wins",
+       subtitle = "2011 Season",
+       caption = "data source: Retrosheet",
+       x = "one-run wins") +
+  scale_color_manual(values = c("#2905A1", "#AAAAAA")) +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        legend.title=element_blank())
+```
+
+<details>
+<summary>graph code</summary>
+```{r, echo = TRUE, eval = FALSE}
+one_run_wins <- retro_gl_2011 |>
+  select(VisitingTeam, HomeTeam, VisitorRunsScored, HomeRunsScore) |>
+  mutate(winner = ifelse(HomeRunsScore > VisitorRunsScored, HomeTeam, VisitingTeam),
+    diff = abs(VisitorRunsScored - HomeRunsScore)
+  ) |>
+  filter(diff == 1) |>
+  group_by(winner) |>
+  summarize(one_run_w = n())
+
+teams2011 <- ch4_data |>
+  filter(yearID == 2011) |>
+  mutate(teamID = if_else(teamID == "LAA", "ANA", as.character(teamID))
+  ) |>
+  inner_join(one_run_wins, by = c("teamID" = "winner"))
+
+teams2011 |>
+  mutate(luck = ifelse(resid_pyt > 0, "lucky", "unlucky")) |>
+  ggplot(aes(x = one_run_w, y = resid_pyt)) +
+  #geom_point() +
+  geom_text_repel(aes(color = luck, label = teamID)) + 
+  xlab("One run wins") + ylab("Pythagorean residuals") +
+  labs(title = "Pythagorean Residuals versus One-Run Wins",
+       subtitle = "2011 Season",
+       caption = "data source: Retrosheet",
+       x = "one-run wins") +
+  scale_color_manual(values = c("#2905A1", "#AAAAAA")) +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        legend.title=element_blank())
+```
+</details>
+
+
+### Great Relievers
+
+* $GR > 50$
+* $ERA < 2.50$
+
+We obtain summary statistics on the Pythagorean residuals
+
+```{r, echo = FALSE, eval = TRUE, message = FALSE, warning = FALSE}
+top_closers <- Pitching |>
+  filter(GF > 50 & ERA < 2.5) |>
+  select(playerID, yearID, teamID)
+
+ch4_data |>
+  inner_join(top_closers) |>
+  pull(resid_pyt) |>
+  summary() |>
+  round(digits = 4)
+```
+
+Over a 162-game season, a top reliever provides
+
+$$0.0078*162 \approx 1.2636 \text{ wins}$$
+
+
+## How Many Runs for a Win?
+
+>  “ten-runs-equal-one-win” rule of thumb
+
+Earlier:
+
+$$\widehat{W_{\text{pct}}} = 0.5 + 0.0006*RD$$
+
+* $RD = 0 \rightarrow W_{\text{pct}} = 0.5$
+    * Over 162 games: 81 wins
+* $RD = +10 \rightarrow W_{\text{pct}} = 0.506$
+    * Over 162 games: 82 wins
+
+### Calculus
+
+Ralph Caola derived the number of extra runs needed to get an extra win in a more rigorous way using calculus
+
+$$W = \frac{G \cdot R^{2}}{R^{2} + RA^{2}}$$
+
+$$\begin{array}{rcl}
+
+\frac{\partial W}{\partial R} & = & \frac{\partial}{\partial R}\frac{G \cdot R^{2}}{R^{2} + RA^{2}} \\
+~ & = & \frac{2 \cdot G \cdot R \cdot RA^{2}}{(R^{2} + RA^{2})^{2}} \\
+
+\end{array}$$
+
+<details>
+<summary>calculus in R!</summary>
+```{r}
+D(expression(G * R ^ 2 / (R ^ 2 + RA ^ 2)), "R")
+```
+</details>
+
+### Incremental Runs per Win
+
+$$IR/W = \frac{(R^{2} + RA^{2})^{2}}{2 \cdot G \cdot R \cdot RA^{2}}$$
+
+We can make a user-defined function (and assuming rate statistics "runs per game" and "runs allowed per game" to remove $G$):
+
+```{r}
+IR <- function(RS = 5, RA = 5) {
+  (RS ^ 2 + RA ^ 2)^2 / (2 * RS * RA ^ 2)
+}
+```
+
+With two inputs, we will use a *grid search* to express different numbers of runs scored and runs allowed.
+
+```{r}
+ir_table <- tidyr::expand_grid(RS = 1:7, RA = 1:7) |>
+  mutate(IRW = IR(RS, RA)) |>
+  pivot_wider(names_from = RA, values_from = "IRW",
+              names_prefix = "RA=")
+```
+
+```{r, echo = FALSE, eval = TRUE}
+ir_table |>
+  gt() |>
+  cols_align(align = "center") |>
+  data_color(columns = -RS,
+             palette = "viridis") |>
+  fmt_number(columns = -RS,
+             decimals = 1) |>
+  tab_header(title = "Incremental runs per win",
+             subtitle = "as posed by Ralph Caola")
+```
+
+<details>
+<summary>table code</summary>
+```{r, echo = TRUE, eval = FALSE}
+ir_table |>
+  gt() |>
+  cols_align(align = "center") |>
+  data_color(columns = -RS,
+             palette = "viridis") |>
+  fmt_number(columns = -RS,
+             decimals = 1) |>
+  tab_header(title = "Incremental runs per win",
+             subtitle = "as posed by Ralph Caola")
+```
+</details>
+
+## Exercises
+
+### Exercise 4.1
+
+> Relationship Between Winning Percentage and Run Differential Across Decades
+
+Section 4.3 used a simple linear model to predict a team’s winning percentage based on its run differential. This model was fit using team data since the 2001 season.
+
+* Refit this linear model using data from the seasons 1961–1970, the seasons 1971–1980, the seasons 1981–1990, and the seasons 1991–2000.
+* Compare across the five decades the predicted winning percentage for a team with a run differential of 10 runs.
+
+```{r, echo = FALSE, eval = TRUE}
+ch4_1_data <- Teams |>
+  select(yearID, teamID, W, L, R, RA) |>
+  mutate(RD = R - RA) |>
+  mutate(Wpct = W / (W + L))
+
+fit_1910s <- lm(Wpct ~ RD, data = ch4_1_data |> filter(yearID >= 1910 & yearID < 1920))
+fit_1920s <- lm(Wpct ~ RD, data = ch4_1_data |> filter(yearID >= 1920 & yearID < 1930))
+fit_1930s <- lm(Wpct ~ RD, data = ch4_1_data |> filter(yearID >= 1930 & yearID < 1940))
+fit_1940s <- lm(Wpct ~ RD, data = ch4_1_data |> filter(yearID >= 1940 & yearID < 1950))
+fit_1950s <- lm(Wpct ~ RD, data = ch4_1_data |> filter(yearID >= 1950 & yearID < 1960))
+fit_1960s <- lm(Wpct ~ RD, data = ch4_1_data |> filter(yearID >= 1960 & yearID < 1970))
+fit_1970s <- lm(Wpct ~ RD, data = ch4_1_data |> filter(yearID >= 1970 & yearID < 1980))
+fit_1980s <- lm(Wpct ~ RD, data = ch4_1_data |> filter(yearID >= 1980 & yearID < 1990))
+fit_1990s <- lm(Wpct ~ RD, data = ch4_1_data |> filter(yearID >= 1990 & yearID < 2000))
+fit_2000s <- lm(Wpct ~ RD, data = ch4_1_data |> filter(yearID >= 2000 & yearID < 2010))
+fit_2010s <- lm(Wpct ~ RD, data = ch4_1_data |> filter(yearID >= 2010 & yearID < 2020))
+fit_2020s <- lm(Wpct ~ RD, data = ch4_1_data |> filter(yearID >= 2020))
+
+pred_1910s_R10 <- predict(fit_1910s, newdata = data.frame(RD = 10))
+pred_1920s_R10 <- predict(fit_1920s, newdata = data.frame(RD = 10))
+pred_1930s_R10 <- predict(fit_1930s, newdata = data.frame(RD = 10))
+pred_1940s_R10 <- predict(fit_1940s, newdata = data.frame(RD = 10))
+pred_1950s_R10 <- predict(fit_1950s, newdata = data.frame(RD = 10))
+pred_1960s_R10 <- predict(fit_1960s, newdata = data.frame(RD = 10))
+pred_1970s_R10 <- predict(fit_1970s, newdata = data.frame(RD = 10))
+pred_1980s_R10 <- predict(fit_1980s, newdata = data.frame(RD = 10))
+pred_1990s_R10 <- predict(fit_1990s, newdata = data.frame(RD = 10))
+pred_2000s_R10 <- predict(fit_2000s, newdata = data.frame(RD = 10))
+pred_2010s_R10 <- predict(fit_2010s, newdata = data.frame(RD = 10))
+pred_2020s_R10 <- predict(fit_2020s, newdata = data.frame(RD = 10))
+
+starts <- seq(1910, 2020, by = 10)
+ends   <- c(seq(1919, 2019, by = 10), 2023)
+decade <- paste(starts, "to", ends)
+beta_0 <- c(
+  fit_1910s$coefficients[1],
+  fit_1920s$coefficients[1],
+  fit_1930s$coefficients[1],
+  fit_1940s$coefficients[1],
+  fit_1950s$coefficients[1],
+  fit_1960s$coefficients[1],
+  fit_1970s$coefficients[1],
+  fit_1980s$coefficients[1],
+  fit_1990s$coefficients[1],
+  fit_2000s$coefficients[1],
+  fit_2010s$coefficients[1],
+  fit_2020s$coefficients[1])
+beta_1 <- c(
+  fit_1910s$coefficients[2],
+  fit_1920s$coefficients[2],
+  fit_1930s$coefficients[2],
+  fit_1940s$coefficients[2],
+  fit_1950s$coefficients[2],
+  fit_1960s$coefficients[2],
+  fit_1970s$coefficients[2],
+  fit_1980s$coefficients[2],
+  fit_1990s$coefficients[2],
+  fit_2000s$coefficients[2],
+  fit_2010s$coefficients[2],
+  fit_2020s$coefficients[2])
+RD_10 <- c(
+  pred_1910s_R10,
+  pred_1920s_R10,
+  pred_1930s_R10,
+  pred_1940s_R10,
+  pred_1950s_R10,
+  pred_1960s_R10,
+  pred_1970s_R10,
+  pred_1980s_R10,
+  pred_1990s_R10,
+  pred_2000s_R10,
+  pred_2010s_R10,
+  pred_2020s_R10)
+
+df_4_1 <- data.frame(decade, beta_0, beta_1, RD_10)
+
+df_4_1 |>
+  gt() |>
+  cols_align(align = "center") |>
+  fmt_number(columns = -decade,
+             decimals = 5) |>
+  tab_header(title = "Run Differential: +10",
+             subtitle = "over the decades") |>
+  tab_style(
+    style = list(
+      cell_fill(color = "dodgerblue"),
+      cell_text(weight = "bold")),
+    locations = cells_body(columns = RD_10))
+```
+
+<details>
+<summary>table code</summary>
+```{r, echo = TRUE, eval = FALSE}
+ch4_1_data <- Teams |>
+  select(yearID, teamID, W, L, R, RA) |>
+  mutate(RD = R - RA) |>
+  mutate(Wpct = W / (W + L))
+
+fit_1910s <- lm(Wpct ~ RD, data = ch4_1_data |> filter(yearID >= 1910 & yearID < 1920))
+fit_1920s <- lm(Wpct ~ RD, data = ch4_1_data |> filter(yearID >= 1920 & yearID < 1930))
+fit_1930s <- lm(Wpct ~ RD, data = ch4_1_data |> filter(yearID >= 1930 & yearID < 1940))
+fit_1940s <- lm(Wpct ~ RD, data = ch4_1_data |> filter(yearID >= 1940 & yearID < 1950))
+fit_1950s <- lm(Wpct ~ RD, data = ch4_1_data |> filter(yearID >= 1950 & yearID < 1960))
+fit_1960s <- lm(Wpct ~ RD, data = ch4_1_data |> filter(yearID >= 1960 & yearID < 1970))
+fit_1970s <- lm(Wpct ~ RD, data = ch4_1_data |> filter(yearID >= 1970 & yearID < 1980))
+fit_1980s <- lm(Wpct ~ RD, data = ch4_1_data |> filter(yearID >= 1980 & yearID < 1990))
+fit_1990s <- lm(Wpct ~ RD, data = ch4_1_data |> filter(yearID >= 1990 & yearID < 2000))
+fit_2000s <- lm(Wpct ~ RD, data = ch4_1_data |> filter(yearID >= 2000 & yearID < 2010))
+fit_2010s <- lm(Wpct ~ RD, data = ch4_1_data |> filter(yearID >= 2010 & yearID < 2020))
+fit_2020s <- lm(Wpct ~ RD, data = ch4_1_data |> filter(yearID >= 2020))
+
+pred_1910s_R10 <- predict(fit_1910s, newdata = data.frame(RD = 10))
+pred_1920s_R10 <- predict(fit_1920s, newdata = data.frame(RD = 10))
+pred_1930s_R10 <- predict(fit_1930s, newdata = data.frame(RD = 10))
+pred_1940s_R10 <- predict(fit_1940s, newdata = data.frame(RD = 10))
+pred_1950s_R10 <- predict(fit_1950s, newdata = data.frame(RD = 10))
+pred_1960s_R10 <- predict(fit_1960s, newdata = data.frame(RD = 10))
+pred_1970s_R10 <- predict(fit_1970s, newdata = data.frame(RD = 10))
+pred_1980s_R10 <- predict(fit_1980s, newdata = data.frame(RD = 10))
+pred_1990s_R10 <- predict(fit_1990s, newdata = data.frame(RD = 10))
+pred_2000s_R10 <- predict(fit_2000s, newdata = data.frame(RD = 10))
+pred_2010s_R10 <- predict(fit_2010s, newdata = data.frame(RD = 10))
+pred_2020s_R10 <- predict(fit_2020s, newdata = data.frame(RD = 10))
+
+starts <- seq(1910, 2020, by = 10)
+ends   <- c(seq(1919, 2019, by = 10), 2023)
+decade <- paste(starts, "to", ends)
+beta_0 <- c(
+  fit_1910s$coefficients[1],
+  fit_1920s$coefficients[1],
+  fit_1930s$coefficients[1],
+  fit_1940s$coefficients[1],
+  fit_1950s$coefficients[1],
+  fit_1960s$coefficients[1],
+  fit_1970s$coefficients[1],
+  fit_1980s$coefficients[1],
+  fit_1990s$coefficients[1],
+  fit_2000s$coefficients[1],
+  fit_2010s$coefficients[1],
+  fit_2020s$coefficients[1])
+beta_1 <- c(
+  fit_1910s$coefficients[2],
+  fit_1920s$coefficients[2],
+  fit_1930s$coefficients[2],
+  fit_1940s$coefficients[2],
+  fit_1950s$coefficients[2],
+  fit_1960s$coefficients[2],
+  fit_1970s$coefficients[2],
+  fit_1980s$coefficients[2],
+  fit_1990s$coefficients[2],
+  fit_2000s$coefficients[2],
+  fit_2010s$coefficients[2],
+  fit_2020s$coefficients[2])
+RD_10 <- c(
+  pred_1910s_R10,
+  pred_1920s_R10,
+  pred_1930s_R10,
+  pred_1940s_R10,
+  pred_1950s_R10,
+  pred_1960s_R10,
+  pred_1970s_R10,
+  pred_1980s_R10,
+  pred_1990s_R10,
+  pred_2000s_R10,
+  pred_2010s_R10,
+  pred_2020s_R10)
+
+df_4_1 <- data.frame(decade, beta_0, beta_1, RD_10)
+
+df_4_1 |>
+  gt() |>
+  cols_align(align = "center") |>
+  fmt_number(columns = -decade,
+             decimals = 5) |>
+  tab_header(title = "Run Differential: +10",
+             subtitle = "over the decades") |>
+  tab_style(
+    style = list(
+      cell_fill(color = "dodgerblue"),
+      cell_text(weight = "bold")),
+    locations = cells_body(columns = RD_10))
+```
+</details>
+
+
+### Exercise 4.2
+
+> Pythagorean Residuals for Poor and Great Teams in the 19th Century
+
+As baseball was evolving into its modern form, 19th century leagues often featured abysmal teams that did not even succeed in finishing their season, as well as some dominant clubs.
+
+* Fit a Pythagorean formula model to the run differential, win-loss data for teams who played in the 19th century.
+* By inspecting the residual plot of your fitted model from (a), did the great and poor teams in the 19th century do better or worse than one would expect on the basis of their run differentials?
+
+$$\widehat{W_{\text{pct}}} = \frac{R^{1.931}}{R^{1.931} + {RA^{1.931}}}$$
+
+<details>
+<summary>R code</summary>
+```{r, echo = TRUE, eval = TRUE}
+ch4_2_data <- Teams |>
+  filter(yearID < 1900) |>
+  select(yearID, franchID, W, L, R, RA) |>
+  mutate(RD = R - RA) |>
+  mutate(Wpct = W / (W + L)) |>
+  mutate(logWratio = log(W/L),
+         logRratio = log(R/RA))
+
+# handle winless teams!
+ch4_2_data$logWratio[ch4_2_data$W == 0] <- -3.1415
+
+pyt_fit <- lm(logWratio ~ 0 + logRratio, data = ch4_2_data)
+pyt_fit$coefficients
+
+ch4_2_data <- ch4_2_data |>
+  mutate(Wpct_pyt = R^1.931 / (R^1.931 + RA^1.931),
+         resid_pyt = Wpct - Wpct_pyt)
+```
+</details>
+
+```{r, echo = FALSE, eval = TRUE}
+ch4_2_data |>
+  select(yearID, franchID, W, L, R, RA, Wpct, Wpct_pyt, resid_pyt) |>
+  slice_max(n = 10, order_by = Wpct) |>
+  inner_join(TeamsFranchises, by = "franchID") |>
+  select(yearID, franchName, W, L, R, RA, Wpct, Wpct_pyt, resid_pyt) |>
+  mutate(desc = ifelse(resid_pyt > 0, "lucky", "unlucky")) |>
+  gt() |>
+  cols_align(align = "center") |>
+  data_color(columns = desc,
+             palette = "viridis",
+             reverse = TRUE) |>
+  fmt_number(columns = c(Wpct, Wpct_pyt, resid_pyt),
+             decimals = 4) |>
+  tab_header(title = "1800s Baseball",
+             subtitle = "Best Teams") |>
+  tab_style(
+    style = list(
+      cell_fill(color = "dodgerblue"),
+      cell_text(weight = "bold")),
+    locations = cells_body(columns = Wpct))
+
+ch4_2_data |>
+  select(yearID, franchID, W, L, R, RA, Wpct, Wpct_pyt, resid_pyt) |>
+  slice_min(n = 10, order_by = Wpct) |>
+  inner_join(TeamsFranchises, by = "franchID") |>
+  select(yearID, franchName, W, L, R, RA, Wpct, Wpct_pyt, resid_pyt) |>
+  mutate(desc = ifelse(resid_pyt > 0, "lucky", "unlucky")) |>
+  gt() |>
+  cols_align(align = "center") |>
+  data_color(columns = desc,
+             palette = "viridis",
+             reverse = TRUE) |>
+  fmt_number(columns = c(Wpct, Wpct_pyt, resid_pyt),
+             decimals = 4) |>
+  tab_header(title = "1800s Baseball",
+             subtitle = "Worst Teams") |>
+  tab_style(
+    style = list(
+      cell_fill(color = "dodgerblue"),
+      cell_text(weight = "bold")),
+    locations = cells_body(columns = Wpct))
+```
+
+<details>
+<summary>code for tables</summary>
+```{r, echo = TRUE, eval = FALSE}
+ch4_2_data |>
+  select(yearID, franchID, W, L, R, RA, Wpct, Wpct_pyt, resid_pyt) |>
+  slice_max(n = 10, order_by = Wpct) |>
+  inner_join(TeamsFranchises, by = "franchID") |>
+  select(yearID, franchName, W, L, R, RA, Wpct, Wpct_pyt, resid_pyt) |>
+  mutate(desc = ifelse(resid_pyt > 0, "lucky", "unlucky")) |>
+  gt() |>
+  cols_align(align = "center") |>
+  data_color(columns = desc,
+             palette = "viridis",
+             reverse = TRUE) |>
+  fmt_number(columns = c(Wpct, Wpct_pyt, resid_pyt),
+             decimals = 4) |>
+  tab_header(title = "1800s Baseball",
+             subtitle = "Best Teams") |>
+  tab_style(
+    style = list(
+      cell_fill(color = "dodgerblue"),
+      cell_text(weight = "bold")),
+    locations = cells_body(columns = Wpct))
+
+ch4_2_data |>
+  select(yearID, franchID, W, L, R, RA, Wpct, Wpct_pyt, resid_pyt) |>
+  slice_min(n = 10, order_by = Wpct) |>
+  inner_join(TeamsFranchises, by = "franchID") |>
+  select(yearID, franchName, W, L, R, RA, Wpct, Wpct_pyt, resid_pyt) |>
+  mutate(desc = ifelse(resid_pyt > 0, "lucky", "unlucky")) |>
+  gt() |>
+  cols_align(align = "center") |>
+  data_color(columns = desc,
+             palette = "viridis",
+             reverse = TRUE) |>
+  fmt_number(columns = c(Wpct, Wpct_pyt, resid_pyt),
+             decimals = 4) |>
+  tab_header(title = "1800s Baseball",
+             subtitle = "Worst Teams") |>
+  tab_style(
+    style = list(
+      cell_fill(color = "dodgerblue"),
+      cell_text(weight = "bold")),
+    locations = cells_body(columns = Wpct))
+```
+</details>
+
