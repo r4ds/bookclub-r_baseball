@@ -1,10 +1,725 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+---
 # Value of Plays Using Run Expectancy
+
 
 **Learning objectives:**
 
-- THESE ARE NICE TO HAVE BUT NOT ABSOLUTELY NECESSARY
+- Run Expectancy
+- Batting Lineup
+- Run values by bases
+- Value of stealing
 
-## SLIDE 1 {-}
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+library("abdwr3edata")
+library("tidyverse")
 
-- ADD SLIDES AS SECTIONS (`##`).
-- TRY TO KEEP THEM RELATIVELY SLIDE-LIKE; THESE ARE NOTES, NOT THE BOOK ITSELF.
+crcblue <- "#2905A1"
+crc_fc <- c("#2905a1", "#e41a1c", "#4daf4a", "#984ea3")
+```
+
+## Run Expectancy Matrix
+
+Run Expectancy Matrix- Average number of runs scored in the remainder of the inning for each combination of runners and outs
+
+-   8 possible arrangements of runners
+-   24 possible arrangements of runners and outs
+
+Use matrix to find change in expected run value
+
+**What is the relative benefit of different batting plays?**
+
+
+## Runs Scored in the Remainder of the Inning
+
+Potential for runs- avg run scored in remainder of the inning for each combination of runners and outs
+
+-   Represents opportunity to create runs during an inning
+-   Baseline to measure player contributions against
+
+Runs scored in the Remainder Of the Inning (roi):
+$$runs_{\text{roi}} = runs_{\text{Total in inning}} - runs_{\text{So far in inning}}$$
+
+```{r, echo = FALSE, eval = TRUE}
+retro2016 <- retro2016 |> 
+  mutate(
+    runs_before = away_score_ct + home_score_ct,
+    half_inning = paste(game_id, inn_ct, bat_home_id),
+    runs_scored = 
+      (bat_dest_id > 3) + (run1_dest_id > 3) + 
+      (run2_dest_id > 3) + (run3_dest_id > 3)
+  )
+
+half_innings <- retro2016 |>
+  group_by(half_inning) |>
+  summarize(
+    outs_inning = sum(event_outs_ct), 
+    runs_inning = sum(runs_scored),
+    runs_start = first(runs_before),
+    max_runs = runs_inning + runs_start
+  )
+
+retro2016 <- retro2016 |>
+  inner_join(half_innings, by = "half_inning") |>
+  mutate(runs_roi = max_runs - runs_before)
+```
+
+
+## Creating the Matrix
+
+Consider plays with change in:
+
+-   runners on bases
+
+-   number of outs
+
+-   runs scored
+
+Get states (baserunners and outs) to identify changes and filter
+
+Only consider half-innings with 3 outs [small bias]
+
+```{r, echo = FALSE, eval = TRUE}
+retro2016 <- retro2016 |>
+  mutate(
+    bases = paste0(
+      if_else(base1_run_id == "", 0, 1),
+      if_else(base2_run_id == "", 0, 1),
+      if_else(base3_run_id == "", 0, 1)
+    ),
+    state = paste(bases, outs_ct)
+  )
+
+retro2016 <- retro2016 |>
+  mutate(
+    is_runner1 = as.numeric(
+      run1_dest_id == 1 | bat_dest_id == 1
+    ),
+    is_runner2 = as.numeric(
+      run1_dest_id == 2 | run2_dest_id == 2 | 
+        bat_dest_id == 2
+    ),
+    is_runner3 = as.numeric(
+      run1_dest_id == 3 | run2_dest_id == 3 |
+        run3_dest_id == 3 | bat_dest_id == 3
+    ),
+    new_outs = outs_ct + event_outs_ct,
+    new_bases = paste0(is_runner1, is_runner2, is_runner3),
+    new_state = paste(new_bases, new_outs)
+  )
+
+changes2016 <- retro2016 |> 
+  filter(state != new_state | runs_scored > 0)
+
+changes2016_complete <- changes2016 |>
+  filter(outs_inning == 3)
+```
+
+Run expectancy (exp. number of runs scored in the remainder of the inning):
+
+```{r, include = FALSE}
+erm_2016 <- changes2016_complete |> 
+  group_by(bases, outs_ct) |>
+  summarize(mean_run_value = mean(runs_roi))
+```
+
+
+```{r, echo = FALSE}
+ggplot(erm_2016, aes(x = factor(outs_ct), y = bases, fill = mean_run_value)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(mean_run_value, 2)), size = 4, color = "black") +
+  scale_fill_gradientn(colors = heat.colors(10), name = "Run Value")
+```
+
+
+```{r, echo = FALSE}
+base_order <- c("000", "100", "010", "001", "110", "101", "011", "111")
+
+erm_2016 <- erm_2016 |>
+  mutate(bases = factor(bases, levels = base_order))
+
+ggplot(erm_2016, aes(x = bases, y = mean_run_value, color = outs_ct)) +
+  geom_point(size = 3) +
+  labs(x = "Bases", y = "Mean Run Value", color = "Outs") 
+  
+```
+
+
+Change over time:
+
+
+```{r, echo = FALSE}
+base_levels <- c("000", "100", "010", "001", "110", "101", "011", "111")
+
+erm_2002 <- tibble(
+  bases = base_levels,
+  "OLD=0" = c(.51, 1.40, 1.14,  1.96, .90, 1.84, 1.51, 2.33), 
+  "OLD=1" = c(.27,  .94,  .68,  1.36, .54, 1.18,  .94, 1.51),
+  "OLD=2" = c(.10,  .36,  .32,   .63, .23,  .52,  .45,  .78)
+) |>
+  mutate(bases = base_levels)
+
+erm_2016_reorg <- changes2016_complete |>
+  group_by(bases, outs_ct) |>
+  summarize(mean_run_value = mean(runs_roi), .groups = "drop") |>
+  mutate(bases = factor(bases, levels = base_levels)) |>
+  pivot_wider(
+    names_from = outs_ct, 
+    values_from = mean_run_value, 
+    names_prefix = "NEW="
+  )
+
+combined <- bind_cols(erm_2016_reorg, erm_2002 |> select(-bases)) |>
+  pivot_longer(
+    cols = starts_with("NEW=") | starts_with("OLD="),
+    names_to = "source_outs",
+    values_to = "mean_run_value"
+  ) |>
+  separate(source_outs, into = c("source", "outs"), sep = "=") |>
+  mutate(outs = factor(outs, levels = c("0", "1", "2")))
+
+ggplot(combined, aes(x = outs, y = bases, fill = mean_run_value)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(mean_run_value, 2)), size = 4) +
+  scale_fill_gradientn(colors = heat.colors(10), name = "Run Value") +
+  facet_wrap(~ source, ncol = 2, labeller = labeller(source = c("NEW" = "New (2016)", "OLD" = "Old (2002)"))) 
+  
+```
+
+Few changes in average run scoring tendencies of MLB teams 2002-2016
+
+
+## Measuring Success of a Batting Play
+
+Run Value- value of plate appearance; state will change and run expectancy will be updated
+
+$$\text{Run Value} = Runs_{\text{New state}} - Runs_{\text{Old state}} + Runs_{\text{Scored on Play}}$$
+
+
+Data handling:
+
+-   Match expected run values for beginning of each plate appearance by matching bases and outs to run expectancy matrix
+
+-   Match new bases and new outs to run expectancy matrix
+
+-   Set run values with 3 outs to 0
+
+-   End with: run expectancy of current state, run expectancy of new state, difference of run expectancy of current state and new state plus run scored
+
+```{r, echo = FALSE, eval = TRUE}
+retro2016 <- retro2016 |>
+  left_join(erm_2016, join_by("bases", "outs_ct")) |>
+  rename(rv_start = mean_run_value) |>
+  left_join(
+    erm_2016, 
+    join_by(new_bases == bases, new_outs == outs_ct)
+  ) |>
+  rename(rv_end = mean_run_value) |>
+  replace_na(list(rv_end = 0)) |>
+  mutate(run_value = rv_end - rv_start + runs_scored)
+```
+
+
+## José Altuve
+
+Isolate to batting plays where Altuve was the hitter
+
+```{r, echo = FALSE, eval = TRUE}
+library(Lahman)
+
+altuve_id <- People |> 
+  filter(nameFirst == "Jose", nameLast == "Altuve") |>
+  pull(retroID)
+
+altuve <- retro2016 |> 
+  filter(
+    bat_id == altuve_id,
+    bat_event_fl == TRUE
+  )
+```
+
+
+**How did Altuve do in his first three plate appearances in the 2016 season with the Houston Astros?**
+
+```{r}
+altuve |> 
+  select(state, new_state, run_value) |>
+  slice_head(n = 3)
+```
+
+        
+**2 primary questions:**
+
+-    What were the runner/outs situations for the player's plate appearances?
+
+-    What did the batter do with these opportunities to score runs? 
+
+
+
+**Runner states to understand opportunities**
+
+```{r}
+altuve |> 
+  group_by(bases) |> 
+  summarize(N = n())
+```
+
+Most often batting with bases empty or runner only on first
+
+```{r, echo = FALSE}
+ggplot(altuve, aes(bases, run_value, color = run_value)) +
+  geom_jitter(width = 0.25, alpha = 0.5) +
+  geom_hline(yintercept = 0, color = "red") +
+  xlab("Runners on base") +
+  scale_color_gradient(low = "#002D62", high = "#EB6E1F") +
+  annotate("rect",
+           xmin = as.numeric(factor("000", levels = unique(altuve$bases))) - 0.3,
+           xmax = as.numeric(factor("000", levels = unique(altuve$bases))) + 0.3,
+           ymin = 0.95, ymax = 1.05,
+           color = "#F4911E", fill = NA, linewidth = 1)
+```
+
+
+Performance with these opportunities:
+
+-   When bases empty- range of runs was small
+
+-   Other situations- much more variation
+
+
+
+**Total run production for 2016**
+
+Number of opportunities and sum of run values for each situation
+
+```{r}
+runs_altuve <- altuve |> 
+  group_by(bases) |>
+  summarize(
+    PA = n(),
+    total_run_values = sum(run_value)
+  )
+runs_altuve
+```
+
+-   Total contribution at bat with bases empty: 10.10 runs
+
+-   Didn't do well with runners in scoring position
+
+Total contribution for 2016 season (run expectancy change over 24 base/out states):
+
+```{r}
+runs_altuve |> 
+  summarize(RE24 = sum(total_run_values))
+```
+
+
+## Opportunity and Success for All Hitters
+
+Comparing run estimates to evaluate player batting effectiveness
+
+```{r, echo = FALSE}
+retro2016_bat <- retro2016 |> 
+  filter(bat_event_fl == TRUE)
+
+run_exp <- retro2016_bat |> 
+  group_by(bat_id) |>
+  summarize(
+    RE24 = sum(run_value),
+    PA = length(run_value),
+    runs_start = sum(rv_start)
+  )
+```
+
+**Different players have different opportunities to create runs (batting order)**
+
+Performance by season:
+
+-   Total number of plate appearances
+
+-   Sum of runs potentials
+
+-   Sum of the run values
+
+
+
+Focus on batters 400+ plate appearances
+
+```{r}
+run_exp_400 <- run_exp |> 
+  filter(PA >= 400)
+run_exp_400 |>
+  slice_head(n = 6)
+```
+
+**Is there a relationship between batters' opportunities and their success in converting opportunities to runs?**
+
+```{r, echo = FALSE}
+plot1 <- ggplot(run_exp_400, aes(runs_start, RE24)) +
+  geom_point() + 
+  geom_smooth() +
+  geom_hline(yintercept = 0, color = "red")
+plot1
+```
+
+Batters with larger runs start values tend to have larger run contributions but there is a wide spread
+
+```{r, echo = FALSE}
+run_exp_400 <- run_exp_400 |>
+  inner_join(People, by = c("bat_id" = "retroID"))
+library(ggrepel)
+plot1 + 
+  geom_text_repel(
+    data = filter(run_exp_400, RE24 >= 40), 
+    aes(label = nameLast)
+  ) +
+  geom_text_repel(
+    data = filter(run_exp_400, nameLast == "Altuve"), 
+    aes(label = nameLast),
+    nudge_y = -14,                # Offset vertically
+    nudge_x = 16,
+    segment.color = "black",   # Line color to point
+    segment.size = 0.5,        # Line thickness
+    fontface = "bold",
+    color = "#F4911E"
+  )
+```
+
+
+## Position in the Batting Lineup
+
+Evaluating run value criterion in relation to batting position
+
+Note: Using frequency to define batting position
+
+```{r, echo = FALSE}
+regulars <- retro2016 |>
+  inner_join(run_exp_400, by = "bat_id")
+
+positions <- regulars |> 
+  group_by(bat_id, bat_lineup_id) |>
+  summarize(N = n()) |> 
+  arrange(desc(N)) |> 
+  mutate(position = first(bat_lineup_id))
+
+run_exp_400 <- run_exp_400 |>
+  inner_join(positions, by = "bat_id")
+```
+
+```{r, echo = FALSE}
+run_exp_400$position <- as.factor(run_exp_400$position)
+ggplot(run_exp_400, aes(runs_start, RE24, label = position, color = position)) +
+  geom_text() +
+  geom_hline(yintercept = 0, color = "red") +
+  geom_point(
+    data = filter(run_exp_400, bat_id == altuve_id),
+    size = 4, shape = 16, color = crcblue
+  ) +
+  scale_color_brewer(palette = "Set1")
+  
+```
+
+First and second batters create fewer runs than third and fourth
+
+Best hitters generally bat third, fourth, and fifth:
+
+```{r, echo = FALSE}
+run_exp_400_posnear3 <- run_exp_400 %>%
+  filter(position == c(3, 4, 5))
+
+ggplot(run_exp_400_posnear3, aes(runs_start, RE24, label = position, color = position)) +
+  geom_text() +
+  geom_hline(yintercept = 0, color = "red") +
+  geom_point(
+    data = filter(run_exp_400, bat_id == altuve_id),
+    size = 4, shape = 16, color = crcblue
+  ) +
+  scale_color_brewer(palette = "Set1")
+```
+
+Though some fourth (and fifth) position hitters have mediocre run values
+
+Altuve is in the top hitters in terms of creating runs
+
+
+## Value of a home run
+
+Batting average gives equal value to the four possible base hits.
+
+```{r, echo = FALSE}
+home_runs <- retro2016 |> 
+  filter(event_cd == 23)
+```
+```{r}
+home_runs |>
+  select(state) |>
+  table()
+```
+
+```{r, echo = FALSE}
+hr_statevals <- home_runs |>
+  count(state) |>
+  mutate(
+    bases = substr(state, 1, 3),
+    outs = substr(state, 5, 5)
+  )
+
+# Step 2: Create heatmap
+ggplot(hr_statevals, aes(x = outs, y = bases, fill = n)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = n), size = 4) +
+  scale_fill_gradientn(colors = heat.colors(10), name = "Count")
+```
+
+
+```{r}
+hr_statevals <- home_runs |>
+  select(state) |>
+  table() |>
+  prop.table() |>
+  round(3)
+hr_statevals
+```
+
+```{r, echo = FALSE}
+hr_statevals_df <- home_runs |>
+  count(state) |>
+  mutate(prop = round(n / sum(n), 3)) |>
+  mutate(
+    bases = substr(state, 1, 3),
+    outs = substr(state, 5, 5)
+  )
+
+ggplot(hr_statevals_df, aes(x = outs, y = bases, fill = prop)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = prop), size = 4) +
+  scale_fill_gradientn(colors = heat.colors(10), name = "Proportion")
+```
+
+Assess by bases:
+
+```{r, echo = FALSE}
+state_prefixes <- sub("^(\\d{3}) \\d$", "\\1", names(hr_statevals))
+
+tapply(hr_statevals, state_prefixes, sum)
+```
+
+Over half of the home runs are hit with no runners on base
+
+**What is the run value of a home run?**
+
+```{r}
+mean_hr <- home_runs |>
+  summarize(mean_run_value = mean(run_value))
+mean_hr
+```
+
+```{r, echo = FALSE}
+ggplot(home_runs, aes(run_value)) +
+  geom_histogram() + 
+  geom_vline(
+    data = mean_hr, aes(xintercept = mean_run_value), 
+    color = "red", linewidth = 1.5
+  ) +
+  annotate(
+    "text", 1.7, 2000, 
+    label = "Mean Run\nValue", color = "red"
+  )
+```
+
+Most home runs occur with bases empty (1)
+
+**Which runner/out situations lead to the most valuable home runs?**
+
+```{r}
+home_runs |> 
+  arrange(desc(run_value)) |>
+  select(state, new_state, run_value) |>
+  slice_head(n = 1)
+```
+
+Bases loaded, 2 outs
+
+
+## Value of a single
+
+Final state of a home run: bases empty
+
+Final sate of a single: depends on movement of runners on bases
+
+```{r, echo = FALSE}
+singles <- retro2016 |> 
+  filter(event_cd == 20)
+
+mean_singles <- singles |>
+  summarize(mean_run_value = mean(run_value))
+
+ggplot(singles, aes(run_value)) + 
+  geom_histogram(bins = 40) +
+  geom_vline(
+    data = mean_singles, color = "red", 
+    aes(xintercept = mean_run_value), linewidth = 1.5
+  ) +
+  annotate(
+    "text", 0.8, 4000, 
+    label = "Mean Run\nValue", color = "red"
+  )
+```
+
+
+```{r}
+hr_single <- singles |>
+  select(state) |>
+  table()
+hr_single
+```
+
+```{r, echo = FALSE}
+hr_df <- as.data.frame(hr_single)
+colnames(hr_df) <- c("state", "count")
+
+hr_df <- hr_df |>
+  separate(state, into = c("base", "out"), sep = " ")
+
+hr_matrix <- hr_df |>
+  pivot_wider(names_from = out, values_from = count, values_fill = 0)
+
+matrix_data <- as.matrix(hr_matrix[,-1])
+rownames(matrix_data) <- hr_matrix$base
+
+melted_matrix <- hr_matrix |>
+  pivot_longer(
+    cols = -base,
+    names_to = "out",
+    values_to = "count"
+  )
+
+ggplot(melted_matrix, aes(x = out, y = base, fill = count)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = count), color = "black") +
+  scale_fill_gradientn(colors = heat.colors(10)) +
+  theme_minimal()
+```
+
+
+
+By bases: 
+
+```{r, echo = FALSE}
+state_prefixes <- sub("^(\\d{3}) \\d$", "\\1", names(hr_single))
+
+tapply(hr_single, state_prefixes, sum)
+```
+
+Most singles occur with bases empty
+
+
+**What is the most valuable single from the run value perspective?**
+
+```{r}
+singles |> 
+  arrange(desc(run_value)) |>
+  select(state, new_state, run_value) |>
+  slice_head(n = 1)
+```
+
+The Baseball-Reference notes the center fielder made an error on fielding the single that allowed all three runners to score and the batter to reach third
+
+Smallest run values:
+
+```{r}
+singles |> 
+  arrange(run_value) |>
+  select(state, new_state, run_value) |>
+  slice(1)
+```
+
+A runner on second was hit by the ball in play and called out, creating a negative run value
+
+**The benefit of the single depends on the advancement of the runners**
+
+
+## Value of Base Stealing
+
+**Is there a net benefit to attempting to steal a base?**
+
+```{r, echo = FALSE}
+stealing <- retro2016 |> 
+  filter(event_cd %in% c(4, 6))
+
+stealing |> 
+  mutate(event_cd = recode(event_cd, '4' = 'Stolen Base', '6' = 'Caught Stealing')) |>
+  group_by(event_cd) |> 
+  summarize(N = n()) |> 
+  mutate(pct = N / sum(N))
+```
+
+**What are common runners/outs situations for attempting a stolen base?**
+
+```{r}
+stealing |> 
+  group_by(state) |> 
+  summarize(N = n())
+```
+
+Most common: runner only on first
+
+The corresponding run value reflects the success of the attempt.
+
+```{r, echo = FALSE}
+ggplot(stealing, aes(run_value, fill = factor(event_cd))) + 
+  geom_histogram() +
+  scale_fill_manual(
+    name = "event_cd",
+    values = crc_fc,
+    labels = c("Stolen Base (SB)", "Caught Stealing (CS)")
+  )
+```
+
+
+**Focus on stolen base attempts**
+
+State of 100 1
+```{r, echo = FALSE}
+stealing_1001 <- stealing |> 
+  filter(state == "100 1")
+```
+
+```{r, echo = FALSE}
+stealing_1001 |> 
+  mutate(event_cd = recode(event_cd, '4' = 'Stolen Base', '6' = 'Caught Stealing')) |> 
+  group_by(event_cd) |> 
+  summarize(N = n()) |> 
+  mutate(pct = N / sum(N))
+```
+
+Runner stealing success = 70.3%
+
+
+Broken down by New States:
+
+```{r, echo = FALSE}
+stealing_1001 |> 
+  group_by(new_state) |> 
+  summarize(N = n()) |> 
+  mutate(pct = N / sum(N))
+```
+
+-   457 occurrences of successfully advancing to second
+
+-   39 occurrences of successfully advancing to third
+
+
+**Value of attempting stolen bases in this situation**
+
+```{r}
+stealing_1001 |> 
+  summarize(Mean = mean(run_value))
+```
+
+Stolen bases are worthwhile but overall value is 0.007 runs/attempt
+
+**BUT** benefit really depends on success/failure and runners/outs situations
