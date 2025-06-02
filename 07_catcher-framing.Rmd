@@ -2,9 +2,384 @@
 
 **Learning objectives:**
 
-- THESE ARE NICE TO HAVE BUT NOT ABSOLUTELY NECESSARY
+- Plot strike zone
+- Learn how to model called strike probability
+- Learn how to model catcher framing
 
-## SLIDE 1 {-}
+## Background
 
-- ADD SLIDES AS SECTIONS (`##`).
-- TRY TO KEEP THEM RELATIVELY SLIDE-LIKE; THESE ARE NOTES, NOT THE BOOK ITSELF.
+- "Historically, scouts and coaches insisted that certain catchers had the ability to “frame” pitches for umpires. The idea was that by holding the glove relatively still, you could trick the umpire into calling a pitch a strike even if it was technically outside of the strike zone"
+- "Part of the problem was that until the mid-2000s, pitch-level data was hard to come by. With the advent of PITCHf/x, more sophisticated modeling techniques became viable on these more granular data."
+
+## Framing Examples
+
+![Molina framing a strike](http://ia601701.us.archive.org/31/items/JoseMolinaryanDoumitGifs/MolinaFrame1.gif)
+
+![Doumit framing a ball](http://ia801701.us.archive.org/31/items/JoseMolinaryanDoumitGifs/DoumitFrame1.gif)
+
+![Molina framing a strike](http://ia601701.us.archive.org/31/items/JoseMolinaryanDoumitGifs/MolinaFrame3.gif)
+
+![Doumit framing a ball](http://ia601701.us.archive.org/31/items/JoseMolinaryanDoumitGifs/DoumitFrame3.gif)
+
+
+## Getting the data
+
+```{r, eval = FALSE}
+sc2022 <- here::here("data_large/statcast_rds/statcast_2022.rds") |>
+  read_rds()
+sc2022 <- sc2022 |> 
+  mutate(
+    Outcome = case_match(
+      description,
+      c("ball", "blocked_ball", "pitchout", 
+        "hit_by_pitch") ~ "ball",
+      c("swinging_strike", "swinging_strike_blocked",
+        "foul", "foul_bunt", "foul_tip", 
+        "hit_into_play",  "missed_bunt" ) ~ "swing",
+      "called_strike" ~ "called_strike"),
+    Home = ifelse(inning_topbot == "Bot", 1, 0),
+    Count = paste(balls, strikes, sep = "-")
+  )
+```
+
+```{r, eval = FALSE}
+taken <- sc2022 |>
+  filter(Outcome != "swing")
+taken_select <- select(
+  taken, pitch_type, release_speed,
+  description, stand, p_throws, Outcome,
+  plate_x, plate_z, fielder_2_1,
+  pitcher, batter, Count, Home, zone 
+)
+write_rds(
+  taken_select, 
+  here::here("data/sc_taken_2022.rds"), 
+  compress = "xz"
+)
+```
+
+## Where is the Strike Zone?
+
+- Only part of the ball needs to cross home plate to be a strike
+- Home plate is 17 inches wide and ball's circumference is 9 inches
+- Outside edges of strike zone vary by plus or minus 0.947 feet
+- Top and bottom of strike zone varies by batter height (Midpoint between top of shoulders and top of players pants down to hollow beneath kneecap)
+
+![MLB Strike Zone](https://blogs.fangraphs.com/wp-content/uploads/2024/12/Strike-Zone-Possible-Header-1.png)
+
+```{r, eval = FALSE}
+plate_width <- 17 + 2 * (9/pi)
+k_zone_plot <- ggplot(
+  NULL, aes(x = plate_x, y = plate_z)
+) + 
+  geom_rect(
+    xmin = -(plate_width/2)/12, 
+    xmax = (plate_width/2)/12, 
+    ymin = 1.5, 
+    ymax = 3.6, color = crcblue, alpha = 0
+  ) + 
+  coord_equal() + 
+  scale_x_continuous(
+    "Horizontal location (ft.)", 
+    limits = c(-2, 2)
+  ) + 
+  scale_y_continuous(
+    "Vertical location (ft.)", 
+    limits = c(0, 5)
+  )
+```
+
+```{r, eval = FALSE}
+k_zone_plot %+% 
+  sample_n(taken, size = 2000) +
+  aes(color = Outcome) +
+  geom_point(alpha = 0.2) + 
+  scale_color_manual(values = crc_fc)
+```
+
+![](https://beanumber.github.io/abdwr3e/07-framing_files/figure-html/fig-what-strikes-1.png)
+
+```{r, eval=FALSE}
+zones <- taken |>
+  group_by(zone) |>
+  summarize(
+    N = n(), 
+    right_edge = min(1.5, max(plate_x)), 
+    left_edge = max(-1.5, min(plate_x)),
+    top_edge = min(5, quantile(plate_z, 0.95, na.rm = TRUE)), 
+    bottom_edge = max(0, quantile(plate_z, 0.05, na.rm = TRUE)),
+    strike_pct = sum(Outcome == "called_strike") / n(),
+    plate_x = mean(plate_x), 
+    plate_z = mean(plate_z)
+  )
+```
+
+```{r, eval=FALSE}
+library(ggrepel)
+k_zone_plot %+% zones + 
+  geom_rect(
+    aes(
+      xmax = right_edge, xmin = left_edge,
+      ymax = top_edge, ymin = bottom_edge,
+      fill = strike_pct, alpha = strike_pct
+    ), 
+    color = "lightgray"
+  ) +
+  geom_text_repel(
+    size = 3, 
+    aes(
+      label = round(strike_pct, 2),
+      color = strike_pct < 0.5
+    )
+  ) + 
+  scale_fill_gradient(low = "gray70", high = crcblue) + 
+  scale_color_manual(values = crc_fc) +
+  guides(color = FALSE, alpha = FALSE)
+```
+
+![](https://beanumber.github.io/abdwr3e/07-framing_files/figure-html/fig-zones-1.png)
+
+## Modeling Called Strike Percentage
+
+- We use a Generalized Additive Model with binomial family
+
+```{r, eval=FALSE}
+library(mgcv)
+strike_mod <- gam(
+  Outcome == "called_strike" ~ s(plate_x, plate_z), 
+  family = binomial, 
+  data = taken
+)
+```
+
+```{r, eval=FALSE}
+library(broom)
+hats <- strike_mod |>
+  augment(type.predict = "response")
+
+k_zone_plot %+% sample_n(hats, 10000) +
+  geom_point(aes(color = .fitted), alpha = 0.1) + 
+  scale_color_gradient(low = "gray70", high = crcblue)
+```
+
+![](https://beanumber.github.io/abdwr3e/07-framing_files/figure-html/fig-gam-k-zone-1.png)
+
+- We can build a continuous grid
+
+```{r, eval=FALSE}
+library(modelr)
+grid <- taken |>
+  data_grid(
+    plate_x = seq_range(plate_x, n = 100), 
+    plate_z = seq_range(plate_z, n = 100)
+  )
+
+grid_hats <- strike_mod |>
+  augment(type.predict = "response", newdata = grid)
+
+tile_plot <- k_zone_plot %+% grid_hats +
+  geom_tile(aes(fill = .fitted), alpha = 0.7) + 
+  scale_fill_gradient(low = "gray92", high = crcblue)
+tile_plot
+```
+
+![](https://beanumber.github.io/abdwr3e/07-framing_files/figure-html/fig-gam-k-zone-tile-1.png)
+
+- Batter and pitcher handedness may have an effect, let's add it to our GAM
+
+```{r, eval=FALSE}
+hand_mod <- gam(
+  Outcome == "called_strike" ~ 
+    p_throws + stand + s(plate_x, plate_z), 
+  family = binomial, 
+  data = taken
+)
+
+hand_grid <- taken |>
+  data_grid(
+    plate_x = seq_range(plate_x, n = 100), 
+    plate_z = seq_range(plate_z, n = 100),
+    p_throws, 
+    stand
+  )
+hand_grid_hats <- hand_mod |>
+  augment(type.predict = "response", newdata = hand_grid)
+
+diffs <- hand_grid_hats |>
+  group_by(plate_x, plate_z) |>
+  summarize(
+    N = n(), 
+    .fitted = sd(.fitted),
+    .groups = "drop"
+  )
+tile_plot %+% diffs
+```
+
+![](https://beanumber.github.io/abdwr3e/07-framing_files/figure-html/fig-gam-k-zone-tile-diffs-1.png)
+
+## Modeling Catcher Framing
+
+
+```{r, eval=FALSE}
+taken <- taken |>
+  filter(
+    is.na(plate_x) == FALSE,
+    is.na(plate_z) == FALSE
+  ) |> 
+  mutate(
+    strike_prob = predict(
+      strike_mod, 
+      type = "response"
+    )
+  )
+```
+
+$$\log \frac{p_j}{1 - p_j} = \beta_0 + \beta_1 \cdot strike\_prob_j + \alpha_{c(j)}$$
+
+We fit a generalized linear mixed model using fixed effects from the catcher.
+
+```{r, eval=FALSE}
+library(lme4)
+mod_a <- glmer(
+  Outcome == "called_strike" ~ 
+    strike_prob + (1|fielder_2_1),
+  data = taken, 
+  family = binomial
+)
+```
+
+```{r, eval=FALSE}
+fixed.effects(mod_a)
+
+# (Intercept) strike_prob 
+#       -4.00        7.67 
+
+VarCorr(mod_a)
+
+# Groups      Name        Std.Dev.
+#  fielder_2_1 (Intercept) 0.218  
+```
+
+```{r, eval=FALSE}
+c_effects <- mod_a |>
+  ranef() |>
+  as_tibble() |>
+  transmute(
+    id = as.numeric(levels(grp)), 
+    effect = condval
+  )
+```
+
+```{r, eval=FALSE}
+master_id <- baseballr::chadwick_player_lu() |> 
+  mutate(
+    mlb_name = paste(name_first, name_last),
+    mlb_id = key_mlbam
+  ) |> 
+  select(mlb_id, mlb_name) |> 
+  filter(!is.na(mlb_id))
+
+c_effects <- c_effects |>
+  left_join(
+    select(master_id, mlb_id, mlb_name),
+    join_by(id == mlb_id)
+  ) |>
+  arrange(desc(effect))
+
+c_effects |> slice_head(n = 6)
+
+# A tibble: 6 × 3
+#       id effect mlb_name         
+#    <dbl>  <dbl> <chr>            
+# 1 664848  0.358 Donny Sands      
+# 2 669004  0.294 MJ Melendez      
+# 3 642020  0.287 Chuckie Robinson 
+# 4 672832  0.275 Israel Pineda    
+# 5 571912  0.260 Luke Maile       
+# 6 575929  0.243 Willson Contreras
+
+c_effects |> slice_tail(n = 6)
+
+# A tibble: 6 × 3
+#       id effect mlb_name         
+#    <dbl>  <dbl> <chr>            
+# 1 664731 -0.293 P. J. Higgins    
+# 2 455139 -0.304 Robinson Chirinos
+# 3 661388 -0.336 William Contreras
+# 4 608360 -0.357 Chris Okey       
+# 5 435559 -0.357 Kurt Suzuki      
+# 6 595956 -0.390 Cam Gallagher  
+```
+
+$$\log \frac{p_j}{1 - p_j} = \beta_0 + \beta_1 strike\_prob_j + \alpha_{c(j)} + \gamma_{p(j)} + \delta_{b(j)}$$
+
+We add to the model with pitcher and batter effects.
+
+```{r, eval=FALSE}
+mod_b <- glmer(
+  Outcome == "called_strike" ~ strike_prob + 
+    (1|fielder_2_1) +
+    (1|batter) + (1|pitcher),
+  data = taken, 
+  family = binomial
+)
+
+VarCorr(mod_b)
+
+# Groups      Name        Std.Dev.
+#  pitcher     (Intercept) 0.267   
+#  batter      (Intercept) 0.251   
+#  fielder_2_1 (Intercept) 0.209 
+```
+
+
+```{r, eval=FALSE}
+c_effects <- mod_b |>
+  ranef() |>
+  as_tibble() |>
+  filter(grpvar == "fielder_2_1") |>
+  transmute(
+    id = as.numeric(as.character(grp)), 
+    effect = condval
+  )
+c_effects <- c_effects |>
+  left_join(
+    select(master_id, mlb_id, mlb_name),
+    join_by(id == mlb_id)
+  ) |>
+  arrange(desc(effect))
+
+c_effects |> slice_head(n = 6)
+
+# A tibble: 6 × 3
+#       id effect mlb_name       
+#    <dbl>  <dbl> <chr>          
+# 1 624431  0.313 Jose Trevino   
+# 2 669221  0.277 Sean Murphy    
+# 3 425877  0.263 Yadier Molina  
+# 4 664874  0.253 Seby Zavala    
+# 5 543309  0.229 Kyle Higashioka
+# 6 608700  0.221 Kevin Plawecki 
+
+c_effects |> slice_tail(n = 6)
+
+# A tibble: 6 × 3
+#       id effect mlb_name         
+#    <dbl>  <dbl> <chr>            
+# 1 596117 -0.277 Garrett Stubbs   
+# 2 435559 -0.281 Kurt Suzuki      
+# 3 521692 -0.291 Salvador Perez   
+# 4 553869 -0.327 Elias Díaz       
+# 5 455139 -0.336 Robinson Chirinos
+# 6 669004 -0.347 MJ Melendez 
+```
+
+## Further Reading
+
+- Turkenkopf [(2008)](https://www.beyondtheboxscore.com/2008/4/5/389840/framing-the-debate)
+- Fast [(2011)](https://www.baseballprospectus.com/news/article/15093/spinning-yarn-removing-the-mask-encore-presentation/)
+- Lindbergh [(2013)](http://grantland.com/features/studying-art-pitch-framing-catchers-such-francisco-cervelli-chris-stewart-jose-molina-others/)
+- Brooks and Pavlidis [(2014)](https://www.baseballprospectus.com/news/article/22934/framing-and-blocking-pitches-a-regressed-probabilistic-model-a-new-method-for-measuring-catcher-defense/)
+- Brooks, Pavilidis, and Judge [(2015)](https://www.baseballprospectus.com/news/article/25514/moving-beyond-wowy-a-mixed-approach-to-measuring-catcher-framing/)
+- Deshpande and Wyner [(2017)](https://doi.org/10.1515/jqas-2017-0027)
+- Judge [(2018)](https://www.baseballprospectus.com/news/article/38289/bayesian-bagging-generate-uncertainty-intervals-catcher-framing-story/)
