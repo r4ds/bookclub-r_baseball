@@ -2,13 +2,13 @@
 
 **Learning objectives:**
 
-- Review fitting models with R
+- Refresh on regression models (`lm`) in R
 - Study player career trajectories
 
-## Mickey Mantle's trajectory
+## Mickey Mantle's trajectory - Warm up
 
 
-```{r}
+```{r, message=FALSE, warning=FALSE}
 library(tidyverse)
 library(Lahman)
 
@@ -126,7 +126,7 @@ F2 |> pluck("fit") |> summary()
 
 - Goal for this section is to compare trajectories of 'similar' players
 
-- Uses a measure of simularity developed by Bill James, using both:
+- Uses a measure of similarity developed by Bill James, using both:
     - Position
     - Various statistics (G, AB, H, SO, etc etc )
     
@@ -156,7 +156,7 @@ batting_2000 <- batting_2000 |>
   inner_join(Positions, by = "playerID")
 ```
 
-- Add carreer statistics
+- Add career statistics
 
 ```{r}
 my_vars <- c("G", "AB", "R", "H", "X2B", "X3B",
@@ -183,11 +183,11 @@ C_totals <- batting_2000 |>
   )
 ```
 
-- Value_POS are numbers introduced for use in the simularity score by Bill James for positions.
+- Value_POS are numbers introduced for use in the similarity score by Bill James for positions.
 
-## Compute Simularity Score {-}
+## Compute Similarity Score {-}
 
-- Function finds `number` simular players to a given player based on Bill Jame's simularity
+- Function finds `number` similar players to a given player based on Bill Jame's similarity
 
 ```{r}
 similar <- function(p, number = 10) {
@@ -292,6 +292,8 @@ plot_trajectories <- function(player, n_similar = 5, ncol) {
 plot_trajectories("Mickey Mantle", 6, 2)
 ```
 
+- Take aways?
+
 ## Derek Jeter {-}
 
 ```{r}
@@ -300,6 +302,7 @@ dj_plot
 ```
 
 - Many differences in curvature and peak age.
+- Other take-aways?
 
 ## Sumarize by peak Age and curvature {-}
 
@@ -333,6 +336,9 @@ ggplot(S, aes(Age_max, Curvature, label = Name)) +
   geom_point() + geom_label_repel()
 
 ```
+
+
+- Q: Is there a general trend of early and sharp peaks?
 
 ## General Patterns of Peak Age
 
@@ -439,7 +445,13 @@ ggplot(beta_fielders, aes(Position, Peak_age)) +
   )
 ```
 
+- I don't see a clear pattern... thoughts?
 
-## Further reading 
+
+## Discussion points
+
+- Is quadradic too naive?  Gaussian process?
+- Did anyone do exercises they want to share?
+
 
 
