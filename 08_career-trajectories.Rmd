@@ -21,7 +21,7 @@ batting <- Batting |>
   replace_na(list(SF = 0, HBP = 0))
 ```
 
-- Define a function to compute OBP = OBS + SLG and Age
+- Define a function to compute OPS = OBS + SLG and Age
 
 ```{r}
 get_stats <- function(player_id) {
