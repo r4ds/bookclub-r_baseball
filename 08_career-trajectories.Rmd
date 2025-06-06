@@ -2,9 +2,456 @@
 
 **Learning objectives:**
 
-- THESE ARE NICE TO HAVE BUT NOT ABSOLUTELY NECESSARY
+- Refresh on regression models (`lm`) in R
+- Study player career trajectories
 
-## SLIDE 1 {-}
+## Mickey Mantle's trajectory - Warm up
 
-- ADD SLIDES AS SECTIONS (`##`).
-- TRY TO KEEP THEM RELATIVELY SLIDE-LIKE; THESE ARE NOTES, NOT THE BOOK ITSELF.
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(Lahman)
+
+mantle_id <- People |> 
+  filter(nameFirst == "Mickey", nameLast == "Mantle") |>
+  pull(playerID)
+
+# deal with missing stats in early dat
+batting <- Batting |>
+  replace_na(list(SF = 0, HBP = 0))
+```
+
+- Define a function to compute OPS = OBS + SLG and Age
+
+```{r}
+get_stats <- function(player_id) {
+  batting |> 
+    filter(playerID == player_id) |>
+    inner_join(People, by = "playerID") |>
+    mutate(
+      birthyear = if_else(
+        birthMonth >= 7, birthYear + 1, birthYear
+      ),
+      Age = yearID - birthyear,
+      SLG = (H - X2B - X3B - HR + 2 * X2B + 3 * X3B + 4 * HR) / AB,
+      OBP = (H + BB + HBP) / (AB + BB + HBP + SF),
+      OPS = SLG + OBP
+    ) |>
+    select(Age, SLG, OBP, OPS)
+}
+```
+
+- Finaly we can use this to look at OPS for Micky Mantle:
+
+```{r}
+Mantle <- get_stats(mantle_id)
+ggplot(Mantle, aes(Age, OPS)) + geom_point() 
+```
+
+## Fit to parabola {-}
+
+$$
+OPS(\text{Age}) = \text{MAX} - \gamma (\text{Age} - \text{PEAK_AGE})^2
+$$
+- Instead of fitting this nonlinear model, we transform it into this linear model:
+
+$$
+\begin{aligned}
+OPS(\text{Age}) &=  A + B (\text{Age}-30) + C (\text{Age} - 30))^2\\
+\text{PEAK_AGE}  &= 30 - \frac{B}{2C}\\
+\text{MAX} &= A - \frac{B^2}{4C}
+\end{aligned}
+$$
+- This can be fit with `lm` using the formula:
+
+```
+OPS ~ I(Age - 30) + I((Age - 30)^2)
+```
+
+## Fit (Mantle) {-}
+
+```{r}
+fit_model <- function(d) {
+  fit <- lm(OPS ~ I(Age - 30) + I((Age - 30)^2), data = d)
+  b <- coef(fit)
+  Age_max <- 30 - b[2] / b[3] / 2
+  Max <- b[1] - b[2] ^ 2 / b[3] / 4
+  list(fit = fit, Age_max = Age_max, Max = Max)
+}
+F2 <- fit_model(Mantle)
+F2 |>
+  pluck("fit") |>
+  coef()
+```
+
+- What we really want though:
+
+```{r}
+c(F2$Age_max, F2$Max)
+```
+
+## Plot it {-}
+
+```{r}
+ggplot(Mantle, aes(Age, OPS)) + geom_point() +
+  geom_smooth(
+    method = "lm", se = FALSE, linewidth = 1.5,
+    formula = y ~ poly(x, 2, raw = TRUE)
+  ) +
+  geom_vline(
+    xintercept = F2$Age_max, 
+    linetype = "dashed", color = "red"
+  ) +
+  geom_hline(
+    yintercept = F2$Max,
+    linetype = "dashed", color = "red"
+  ) +
+  annotate(
+    geom = "text", x = c(29, 20), y = c(0.72, 1.1),
+    label = c("Peak age", "Max"), size = 5,
+    color = "red"
+  )
+```
+
+## Full fit summary {-}
+
+```{r}
+F2 |> pluck("fit") |> summary()
+```
+
+- Note for example $R^2$ about 0.60, meaning 60% of the variation in OPS is 'explained' by the curve. 
+
+
+## Comparing Trajectories
+
+- Goal for this section is to compare trajectories of 'similar' players
+
+- Uses a measure of similarity developed by Bill James, using both:
+    - Position
+    - Various statistics (G, AB, H, SO, etc etc )
+    
+
+## Setting up the data {-}
+
+- Only players with more then 2000 AB:
+
+```{r}
+batting_2000 <- batting |> 
+  group_by(playerID) |>
+  summarize(AB_career = sum(AB, na.rm = TRUE)) |>
+  inner_join(batting, by = "playerID") |>
+  filter(AB_career >= 2000)
+```
+
+- Add the most played position:
+
+```{r}
+Positions <- Fielding |> 
+  group_by(playerID, POS) |>
+  summarize(Games = sum(G)) |> 
+  arrange(playerID, desc(Games)) |> 
+  filter(POS == first(POS))
+
+batting_2000 <- batting_2000 |>
+  inner_join(Positions, by = "playerID")
+```
+
+- Add career statistics
+
+```{r}
+my_vars <- c("G", "AB", "R", "H", "X2B", "X3B",
+             "HR", "RBI", "BB", "SO", "SB")
+
+C_totals <- batting_2000 |>
+  group_by(playerID) |>
+  summarize(across(all_of(my_vars), ~ sum(.x, na.rm = TRUE))) |>
+  mutate(
+    AVG = H / AB,
+    SLG = (H - X2B - X3B - HR + 2 * X2B + 3 * X3B + 4 * HR) / AB
+  ) |>
+  inner_join(Positions, by = "playerID") |>
+  mutate(
+    Value_POS = case_when(
+      POS == "C" ~ 240,
+      POS == "SS" ~ 168,
+      POS == "2B" ~ 132,
+      POS == "3B" ~ 84,
+      POS == "OF" ~ 48,
+      POS == "1B" ~ 12, 
+      TRUE ~ 0
+    )
+  )
+```
+
+- Value_POS are numbers introduced for use in the similarity score by Bill James for positions.
+
+## Compute Similarity Score {-}
+
+- Function finds `number` similar players to a given player based on Bill Jame's similarity
+
+```{r}
+similar <- function(p, number = 10) {
+  P <- C_totals |> 
+    filter(playerID == p)
+  C_totals |> 
+    mutate(
+      sim_score = 1000 -
+        floor(abs(G - P$G) / 20) -
+        floor(abs(AB - P$AB) / 75) -
+        floor(abs(R - P$R) / 10) -
+        floor(abs(H - P$H) / 15) -
+        floor(abs(X2B - P$X2B) / 5) -
+        floor(abs(X3B - P$X3B) / 4) -
+        floor(abs(HR - P$HR) / 2) -
+        floor(abs(RBI - P$RBI) / 10) -
+        floor(abs(BB - P$BB) / 25) -
+        floor(abs(SO - P$SO) / 150) -
+        floor(abs(SB - P$SB) / 20) - 
+        floor(abs(AVG - P$AVG) / 0.001) - 
+        floor(abs(SLG - P$SLG) / 0.002) -
+        abs(Value_POS - P$Value_POS)
+    ) |>
+    arrange(desc(sim_score)) |> 
+    slice_head(n = number)
+}
+```
+
+## Example {-}
+
+```{r}
+similar(mantle_id, 6)
+```
+
+## Compute Age and OPS for all players / seasons {-}
+
+
+
+```{r}
+batting_2000 <- batting_2000 |> 
+  group_by(playerID, yearID) |>  # combine stints
+  summarize(
+    G = sum(G), AB = sum(AB), R = sum(R),
+    H = sum(H), X2B = sum(X2B), X3B = sum(X3B),
+    HR = sum(HR), RBI = sum(RBI), SB = sum(SB),
+    CS = sum(CS), BB = sum(BB), SH = sum(SH),
+    SF = sum(SF), HBP = sum(HBP),
+    AB_career = first(AB_career),
+    POS = first(POS)
+  ) |>
+  mutate(
+    SLG = (H - X2B - X3B - HR + 2 * X2B + 3 * X3B + 4 * HR) / AB,
+    OBP = (H + BB + HBP) / (AB + BB + HBP + SF),
+    OPS = SLG + OBP
+  ) |>      # add age
+  inner_join(People, by = "playerID") |>
+  mutate(
+    Birthyear = if_else(
+      birthMonth >= 7, birthYear + 1, birthYear
+    ),
+    Age = yearID - Birthyear
+  ) |> 
+  drop_na(Age)  # Drop NA's 
+
+```
+
+## Fit and plot trajectories {-}
+
+- Note that the fitting is done by ggplot2
+
+```{r}
+plot_trajectories <- function(player, n_similar = 5, ncol) { 
+  flnames <- unlist(str_split(player, " "))
+  
+  player <- People |> 
+    filter(nameFirst == flnames[1], nameLast == flnames[2]) |>
+    select(playerID)
+
+  player_list <- player |>
+    pull(playerID) |>
+    similar(n_similar) |>
+    pull(playerID)
+  
+  Batting_new <- batting_2000 |> 
+    filter(playerID %in% player_list) |>
+    mutate(Name = paste(nameFirst, nameLast))
+  
+    ggplot(Batting_new, aes(Age, OPS)) + 
+      geom_smooth(
+        method = "lm",
+        formula = y ~ x + I(x^2),
+        linewidth = 1.5
+      ) +
+      facet_wrap(vars(Name), ncol = ncol) + 
+      theme_bw()
+}
+```
+
+## Mickey Mantle {-}
+
+```{r}
+plot_trajectories("Mickey Mantle", 6, 2)
+```
+
+- Take aways?
+
+## Derek Jeter {-}
+
+```{r}
+dj_plot <- plot_trajectories("Derek Jeter", 9, 3)
+dj_plot
+```
+
+- Many differences in curvature and peak age.
+- Other take-aways?
+
+## Sumarize by peak Age and curvature {-}
+
+```{r}
+library(broom)
+data_grouped <- dj_plot$data |> # pull data out of plot 
+  group_by(Name)
+player_names <- data_grouped |>
+  group_keys() |>
+  pull(Name)
+regressions <- data_grouped |>
+  group_split() |>
+  map(~lm(OPS ~ I(Age - 30) + I((Age - 30) ^ 2), data = .)) |>
+  map(tidy) |>
+  set_names(player_names) |>
+  bind_rows(.id = "Name")
+ 
+
+S <- regressions |> 
+  group_by(Name) |> 
+  summarize(
+    b1 = estimate[1],
+    b2 = estimate[2],
+    Curvature = estimate[3],
+    Age_max = round(30 - b2 / Curvature / 2, 1),
+    Max = round(b1 - b2 ^ 2 / Curvature / 4, 3)
+  )
+
+library(ggrepel)
+ggplot(S, aes(Age_max, Curvature, label = Name)) + 
+  geom_point() + geom_label_repel()
+
+```
+
+
+- Q: Is there a general trend of early and sharp peaks?
+
+## General Patterns of Peak Age
+
+- How have peak ages varied across time?
+
+- How does peak age vary with number of at bats?
+
+## Data preperation {-}
+
+- Focus on players that had complete careers 
+- Use middle of career to position players careers in time
+- Fit them all and extract coefficients
+
+```{r}
+not_current_playerID <- People |>
+  filter(finalGame < "2021-11-01") |> 
+  pull(playerID)
+batting_2000 <- batting_2000 |>
+  filter(playerID %in% not_current_playerID) 
+
+midcareers <- batting_2000 |>
+  group_by(playerID) |>
+  summarize(
+    Midyear = (min(yearID) + max(yearID)) / 2,
+    AB_total = first(AB_career)
+  )
+batting_2000 <- batting_2000 |>
+  inner_join(midcareers, by = "playerID")
+
+batting_2000_grouped <- batting_2000 |> 
+  group_by(playerID)
+
+ids <- batting_2000_grouped |>
+  group_keys() |>
+  pull(playerID)
+models <- batting_2000_grouped |>
+  group_split() |>
+  map(~lm(OPS ~ I(Age - 30) + I((Age - 30)^2), data = .)) |>
+  map(tidy) |>
+  set_names(ids) |>
+  bind_rows(.id = "playerID")
+
+beta_coefs <- models |> 
+  group_by(playerID) |> 
+  summarize(
+    A = estimate[1],
+    B = estimate[2],
+    C = estimate[3]
+  ) |>
+  mutate(Peak_age = 30 - B / 2 / C) |>
+  inner_join(midcareers, by = "playerID") |>
+  inner_join(Positions) |> # for use later!
+  rename(Position = POS)
+```
+
+## Patterns of peak age over time {-}
+
+```{r}
+age_plot <- ggplot(beta_coefs, aes(Midyear, Peak_age)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(color = "red", method = "loess") +
+  ylim(20, 40) +
+  xlab("Mid Career") + ylab("Peak Age")
+age_plot
+```
+
+- Shows a gradual increase over time (except maybe in last decade?)
+
+## Peak age and career at-bats {-}
+
+```{r}
+age_plot +
+  aes(x = log2(AB_total)) +
+  xlab("Log2 of Career AB")
+```
+
+- Longer careers tend to peak at higher Age
+
+- If they peak earlier they also retire earlier?
+
+
+## Fielding Position
+
+- We already have the fits, just filter by midyear
+
+```{r}
+beta_coefs_a <- beta_coefs |>
+  filter(Midyear >= 1985, Midyear <= 1995)
+```
+
+```{r}
+beta_fielders <- beta_coefs_a |>
+  filter(
+    Position %in% c("1B", "2B", "3B", "SS", "C", "OF")
+  ) |> 
+  inner_join(People)
+
+
+ggplot(beta_fielders, aes(Position, Peak_age)) + 
+  geom_jitter(width = 0.2) + ylim(20, 40) +
+  geom_label_repel(
+    data = filter(beta_fielders, Peak_age > 37),
+    aes(Position, Peak_age, label = nameLast)
+  )
+```
+
+- I don't see a clear pattern... thoughts?
+
+
+## Discussion points
+
+- Is quadradic too naive?  Gaussian process?
+- Did anyone do exercises they want to share?
+
+
+
