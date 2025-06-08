@@ -17,7 +17,8 @@ Imports:
     rmarkdown,
     tidyverse,
     ggrepel,
-    gt
+    gt,
+    ggtext
 Remotes: 
     beanumber/abdwr3edata
 Encoding: UTF-8
