@@ -2,9 +2,1245 @@
 
 **Learning objectives:**
 
-- THESE ARE NICE TO HAVE BUT NOT ABSOLUTELY NECESSARY
+- Simulate a half-inning
+- Simulate many half-innings
+- Simulate a baseball season
+- Simulate many baseball seasons
 
-## SLIDE 1 {-}
+```{r setup_ch_9, message = FALSE, warning = FALSE}
+library("abdwr3edata")
+library("ggtext")
+library("gt")
+library("Lahman")
+library("tidyverse")
 
-- ADD SLIDES AS SECTIONS (`##`).
-- TRY TO KEEP THEM RELATIVELY SLIDE-LIKE; THESE ARE NOTES, NOT THE BOOK ITSELF.
+#https://beanumber.github.io/sds192/lab-import.html#Data_in_other_formats
+load("data/retro2016.rda") #has retro2016 data frame
+```
+
+<details>
+<summary>Session Info</summary>
+
+```{r}
+sessionInfo()
+```
+
+</details>
+
+
+## Setup
+
+### Retrieve situation states
+
+```{r}
+retro2016 <- retro2016 |>
+  abdwr3edata::retrosheet_add_states() #from chapter 5
+colnames(retro2016[,99:107])
+```
+
+### Sum runs and ID half innings
+
+```{r}
+half_innings <- retro2016 |>
+  mutate(
+    runs = away_score_ct + home_score_ct,
+    half_inning_id = paste(game_id, inn_ct, bat_home_id)
+  ) |>
+  group_by(half_inning_id) |>
+  summarize(
+    outs_inning = sum(event_outs_ct), 
+    runs_start = first(runs),
+    runs_inning = sum(runs_scored),
+    max_runs = runs_start + runs_inning
+  )
+nrow(half_innings)
+```
+
+### Meaningful plays
+
+* retain observations with change in state or runs scored
+* complete innings (i.e. three outs)
+* ignore: steals, caught stealing, wild pitches, passed balls
+
+```{r}
+retro2016_complete <- retro2016 |> 
+  mutate(
+    half_inning_id = paste(game_id, inn_ct, bat_home_id)
+  ) |>
+  inner_join(half_innings, join_by(half_inning_id)) |>
+  filter(state != new_state | runs_scored > 0) |> 
+  filter(outs_inning == 3, bat_event_fl)
+print(paste0(round(100*(nrow(retro2016_complete) / nrow(retro2016))), " percent"))
+```
+
+
+### End of innings
+
+> In our definition of the new_state variable, we recorded the runner locations when there were three outs. The runner locations don’t matter, so we recode new_state to always have the value 3 when the number of outs is equal to 3.
+
+```{r}
+retro2016_complete <- retro2016_complete |>
+  mutate(new_state = str_replace(new_state, "[0-1]{3} 3", "3"))
+table(retro2016_complete$new_state)
+```
+
+## Transition Matrices
+
+### Transition states
+
+* 24 `state` labels
+* 25 `new_state` labels
+
+```{r}
+# transition matrix
+T_matrix <- retro2016_complete |> select(state, new_state) |> table()
+```
+
+```{r, echo = FALSE, eval = TRUE}
+T_df <- T_matrix |> 
+  as.data.frame() |>
+  pivot_wider(names_from = new_state, values_from = Freq)
+
+T_df |>
+  gt() |>
+  cols_align(align = "center") |>
+  data_color(columns = -state,
+             palette = "inferno") |>
+  tab_header(title = "Play State Transition Matrix",
+             subtitle = "2016 Season")
+```
+
+<details>
+<summary>table code</summary>
+```{r, echo = TRUE, eval = FALSE}
+T_df <- T_matrix |> 
+  as.data.frame() |>
+  pivot_wider(names_from = new_state, values_from = Freq)
+
+T_df |>
+  gt() |>
+  cols_align(align = "center") |>
+  data_color(columns = -state,
+             palette = "inferno") |>
+  tab_header(title = "Play State Transition Matrix",
+             subtitle = "2016 Season")
+```
+</details>
+
+### Absorbing states
+
+> When the inning reaches 3 outs, then it stays at 3 outs, so the probability of staying in this state is 1
+
+```{r}
+# probability matrix
+P_matrix <- prop.table(T_matrix, 1)
+P_matrix <- P_matrix |> rbind("3" = c(rep(0, 24), 1))
+```
+
+```{r, echo = FALSE, eval = TRUE}
+P_df <- P_matrix |> as.data.frame()
+P_df <- cbind(c(as.character(T_df$state), "3"), P_df)
+colnames(P_df)[1] <- "state"
+
+P_df |>
+  gt() |>
+  cols_align(align = "center") |>
+  data_color(columns = -state,
+             palette = "inferno") |>
+  fmt_number(columns = -state,
+             decimals = 3) |>
+  tab_header(title = "Play State Transition Probability Matrix",
+             subtitle = "2016 Season")
+```
+
+<details>
+<summary>table code</summary>
+```{r, echo = TRUE, eval = FALSE}
+P_df <- P_matrix |> as.data.frame()
+P_df <- cbind(c(as.character(T_df$state), "3"), P_df)
+colnames(P_df)[1] <- "state"
+
+P_df |>
+  gt() |>
+  cols_align(align = "center") |>
+  data_color(columns = -state,
+             palette = "inferno") |>
+  fmt_number(columns = -state,
+             decimals = 3) |>
+  tab_header(title = "Play State Transition Probability Matrix",
+             subtitle = "2016 Season")
+```
+</details>
+
+### Examples
+
+> we display the transition probabilities starting at the “000 0” state, no runners and no outs below
+
+```{r, echo = FALSE, eval = TRUE}
+P_matrix |>
+  as_tibble(rownames = "state") |>
+  filter(state == "000 0") |>
+  pivot_longer(
+    cols = -state, 
+    names_to = "new_state", 
+    values_to = "Prob" 
+  ) |>
+  filter(Prob > 0) |>
+  arrange(desc(Prob)) |>
+  gt() |>
+  cols_align(align = "center") |>
+  data_color(columns = Prob,
+             palette = "inferno") |>
+  fmt_number(columns = Prob,
+             decimals = 3) |>
+  tab_header(title = "Play State Transition Probability Matrix",
+             subtitle = "2016 Season")
+```
+
+<details>
+<summary>table code</summary>
+```{r, echo = TRUE, eval = FALSE}
+P_matrix |>
+  as_tibble(rownames = "state") |>
+  filter(state == "000 0") |>
+  pivot_longer(
+    cols = -state, 
+    names_to = "new_state", 
+    values_to = "Prob" 
+  ) |>
+  filter(Prob > 0) |>
+  arrange(desc(Prob)) |>
+  gt() |>
+  cols_align(align = "center") |>
+  data_color(columns = Prob,
+             palette = "inferno") |>
+  fmt_number(columns = Prob,
+             decimals = 3) |>
+  tab_header(title = "Play State Transition Probability Matrix",
+             subtitle = "2016 Season")
+```
+</details>
+
+> starting from the “010 2” state, runner on second with two outs
+
+```{r, echo = FALSE, eval = TRUE}
+P_matrix |>
+  as_tibble(rownames = "state") |>
+  filter(state == "010 2") |>
+  pivot_longer(
+    cols = -state, 
+    names_to = "new_state", 
+    values_to = "Prob" 
+  ) |>
+  filter(Prob > 0) |>
+  arrange(desc(Prob)) |>
+  gt() |>
+  cols_align(align = "center") |>
+  data_color(columns = Prob,
+             palette = "inferno") |>
+  fmt_number(columns = Prob,
+             decimals = 3) |>
+  tab_header(title = "Play State Transition Probability Matrix",
+             subtitle = "2016 Season")
+```
+
+<details>
+<summary>table code</summary>
+```{r, echo = TRUE, eval = FALSE}
+P_matrix |>
+  as_tibble(rownames = "state") |>
+  filter(state == "010 2") |>
+  pivot_longer(
+    cols = -state, 
+    names_to = "new_state", 
+    values_to = "Prob" 
+  ) |>
+  filter(Prob > 0) |>
+  arrange(desc(Prob)) |>
+  gt() |>
+  cols_align(align = "center") |>
+  data_color(columns = Prob,
+             palette = "inferno") |>
+  fmt_number(columns = Prob,
+             decimals = 3) |>
+  tab_header(title = "Play State Transition Probability Matrix",
+             subtitle = "2016 Season")
+```
+</details>
+
+
+## Tracking Runs Scored
+
+$$\text{runs} = (N_{\text{runners}}^{(b)} + O^{(b)} + 1) - (N_{\text{runners}}^{(a)} + O^{(a)})$$
+
+* $N_{\text{runners}}$: number of runners in a state
+* $O$: number of outs
+
+```{r}
+num_havent_scored <- function(s) {
+  # INPUT: game state
+  # OUTPUTS: number of runners and outs
+  s |> str_split("") |> pluck(1) |> as.numeric() |> sum(na.rm = TRUE)}
+```
+
+```{r}
+# apply to all possible states
+runners_out <- T_matrix |> row.names() |> set_names() |> map_int(num_havent_scored)
+```
+
+```{r}
+# for all possible pairs of states
+R_runs <- outer(runners_out + 1, runners_out, 
+  FUN = "-") |>           #difference in runs
+  cbind("3" = rep(0, 24)) #ensure square matrix
+```
+
+```{r, echo = FALSE, eval = TRUE}
+R_df <- R_runs |> 
+  as.data.frame() 
+R_df <- cbind(T_df$state, R_df)
+colnames(R_df)[1] <- "state"
+
+R_df |>
+  gt() |>
+  cols_align(align = "center") |>
+  # data_color(columns = -state,
+  #            palette = "inferno") |>
+  tab_header(title = "Tracking Runs Scored",
+             subtitle = "2016 Season")
+```
+
+<details>
+<summary>table code</summary>
+```{r, echo = TRUE, eval = FALSE}
+R_df <- R_runs |> 
+  as.data.frame() 
+R_df <- cbind(T_df$state, R_df)
+colnames(R_df)[1] <- "state"
+
+R_df |>
+  gt() |>
+  cols_align(align = "center") |>
+  # data_color(columns = -state,
+  #            palette = "inferno") |>
+  tab_header(title = "Tracking Runs Scored",
+             subtitle = "2016 Season")
+```
+</details>
+
+
+## Simulate Half-Inning
+
+```{r}
+simulate_half_inning <- function(P, R, start = 1) {
+  # INPUTS:
+      ## P: probability transition matrix
+      ## R: run matrix
+      ## start: starting state, 1 <= s <= 24
+  # OUTPUT: number of runs scored
+  s <- start
+  path <- NULL
+  runs <- 0
+  while (s < 25) {
+    s_new <- sample(1:25, size = 1, prob = P[s, ])
+    path <- c(path, s_new)
+    runs <- runs + R[s, s_new]
+    s <- s_new
+  }
+  runs
+}
+```
+
+### Many Iterations
+
+```{r}
+set.seed(20250611)
+simulated_runs <- 1:12345 |>
+  map_int(~simulate_half_inning(T_matrix, R_runs))
+table(simulated_runs)
+```
+
+> How many runs are scored (on average) during a half-inning?
+
+```{r}
+mean(simulated_runs)
+```
+
+### All baserunner-outs states
+
+```{r}
+runs_j <- function(j) {
+  1:987 |> #smaller number than textbook
+    map_int(~simulate_half_inning(T_matrix, R_runs, j)) |>
+    mean()
+}
+
+erm_2016_mc <- tibble(
+  state = row.names(T_matrix), 
+  mean_run_value = map_dbl(1:24, runs_j)
+) |>
+  mutate(
+    bases = str_sub(state, 1, 3),
+    outs_ct = as.numeric(str_sub(state, 5, 5))
+  ) |>
+  select(-state)
+```
+
+
+```{r, echo = FALSE, eval = TRUE}
+erm_2016_mc |>
+  pivot_wider(names_from = outs_ct, values_from = mean_run_value) |>
+  gt() |>
+  cols_align(align = "center") |>
+  data_color(columns = -bases,
+             palette = "inferno")  |>
+  fmt_number(columns = -bases,
+             decimals = 2) |>
+  tab_header(title = "Runs Potential",
+             subtitle = "2016 Season")
+```
+
+<details>
+<summary>table code</summary>
+```{r, echo = TRUE, eval = FALSE}
+erm_2016_mc |>
+  pivot_wider(names_from = outs_ct, values_from = mean_run_value) |>
+  gt() |>
+  cols_align(align = "center") |>
+  data_color(columns = -bases,
+             palette = "inferno")  |>
+  fmt_number(columns = -bases,
+             decimals = 2) |>
+  tab_header(title = "Runs Potential",
+             subtitle = "2016 Season")
+```
+</details>
+
+> To understand the effect of non-batting plays (stealing, caught stealing, wild pitches, etc.) on run scoring, we compare this run expectancy matrix with the one found in Chapter 5 using all batting and non-batting plays. 
+
+From Chapter 5, we previously computed an expected run matrix as `erm_2016`.
+
+<details>
+<summary>erm code</summary>
+```{r, message = FALSE, warning = FALSE}
+retro2016 <- retro2016 |>
+  mutate(
+    is_runner1 = as.numeric(
+      run1_dest_id == 1 | bat_dest_id == 1
+    ),
+    is_runner2 = as.numeric(
+      run1_dest_id == 2 | run2_dest_id == 2 | 
+        bat_dest_id == 2
+    ),
+    is_runner3 = as.numeric(
+      run1_dest_id == 3 | run2_dest_id == 3 |
+        run3_dest_id == 3 | bat_dest_id == 3
+    ),
+    new_outs = outs_ct + event_outs_ct,
+    new_bases = paste0(is_runner1, is_runner2, is_runner3),
+    new_state = paste(new_bases, new_outs)
+  )
+
+retro2016 <- retro2016 |> 
+  mutate(
+    runs_before = away_score_ct + home_score_ct,
+    half_inning = paste(game_id, inn_ct, bat_home_id),
+    runs_scored = 
+      (bat_dest_id > 3) + (run1_dest_id > 3) + 
+      (run2_dest_id > 3) + (run3_dest_id > 3)
+  )
+
+half_innings <- retro2016 |>
+  group_by(half_inning) |>
+  summarize(
+    outs_inning = sum(event_outs_ct), 
+    runs_inning = sum(runs_scored),
+    runs_start = first(runs_before),
+    max_runs = runs_inning + runs_start
+  )
+
+retro2016 <- retro2016 |>
+  inner_join(half_innings, by = "half_inning") |>
+  mutate(runs_roi = max_runs - runs_before)
+
+changes2016 <- retro2016 |> 
+  filter(state != new_state | runs_scored > 0)
+
+changes2016_complete <- changes2016 |>
+ filter(outs_inning == 3)
+
+erm_2016 <- changes2016_complete |> 
+  group_by(bases, outs_ct) |>
+  summarize(mean_run_value = mean(runs_scored)) |>
+  ungroup()
+```
+</details>
+
+```{r}
+erm_2016_df <- erm_2016 |>
+  inner_join(erm_2016_mc, join_by(bases, outs_ct)) |>
+  mutate(
+    run_value_diff = round(mean_run_value.x - mean_run_value.y, 2)
+  ) |>
+  select(bases, outs_ct, run_value_diff) |>
+  pivot_wider(names_from = outs_ct, values_from = run_value_diff)
+```
+
+```{r, echo = FALSE, eval = TRUE}
+erm_2016_df  |>
+  gt() |>
+  cols_align(align = "center") |>
+  data_color(columns = -bases,
+             palette = "inferno")  |>
+  fmt_number(columns = -bases,
+             decimals = 2) |>
+  tab_header(title = "Value of Non-Batting Plays",
+             subtitle = "2016 Season")
+```
+
+<details>
+<summary>table code</summary>
+```{r, echo = TRUE, eval = FALSE}
+erm_2016_df  |>
+  gt() |>
+  cols_align(align = "center") |>
+  data_color(columns = -bases,
+             palette = "inferno")  |>
+  fmt_number(columns = -bases,
+             decimals = 2) |>
+  tab_header(title = "Value of Non-Batting Plays",
+             subtitle = "2016 Season")
+```
+</details>
+
+
+## Stochastic Processes
+
+### Multiple Transitions
+
+> after three plate appearances
+
+```{r}
+P_matrix_3 <- P_matrix %*% P_matrix %*% P_matrix
+```
+
+```{r, echo = FALSE, eval = TRUE}
+P_matrix_3 |>
+  as_tibble(rownames = "state") |>
+  filter(state == "000 0") |>
+  pivot_longer(
+    cols = -state, 
+    names_to = "new_state", 
+    values_to = "Prob" 
+  ) |>
+  filter(Prob > 0) |>
+  arrange(desc(Prob)) |>
+  gt() |>
+  cols_align(align = "center") |>
+  data_color(columns = Prob,
+             palette = "inferno") |>
+  fmt_number(columns = Prob,
+             decimals = 3) |>
+  tab_header(title = "After 3 Plate Appearances",
+             subtitle = "starting with bases empty and zero outs")
+```
+
+<details>
+<summary>table code</summary>
+
+```{r, echo = TRUE, eval = FALSE}
+P_matrix_3 |>
+  as_tibble(rownames = "state") |>
+  filter(state == "000 0") |>
+  pivot_longer(
+    cols = -state, 
+    names_to = "new_state", 
+    values_to = "Prob" 
+  ) |>
+  filter(Prob > 0) |>
+  arrange(desc(Prob)) |>
+  gt() |>
+  cols_align(align = "center") |>
+  data_color(columns = Prob,
+             palette = "inferno") |>
+  fmt_number(columns = Prob,
+             decimals = 3) |>
+  tab_header(title = "After 3 Plate Appearances",
+             subtitle = "starting with bases empty and zero outs")
+```
+</details>
+
+### Fundamental Matrix
+
+$$N = (I - Q)^{-1}$$
+```{r}
+Q <- P_matrix[-25, -25] #without 3-out states
+N <- solve(diag(rep(1, 24)) - Q) 
+```
+
+```{r}
+N_0000 <- round(N["000 0", ], 2)
+head(N_0000, n = 6)
+```
+
+Starting at the beginning of the inning (the “000 0” state)
+
+* the average number of times the inning will be in the “000 0” state is 1.05
+* the average number of times in the “000 1” state is 0.75
+* the average number of times in the “000 2” state is 0.6
+* etc.
+
+```{r}
+sum(N_0000)
+```
+
+* **the average number of plate appearances in a half-inning (before three outs)** is 4.27.
+
+
+### Visit Frequency
+
+> the length of the remainder of the inning, on average, starting with each possible state
+
+$$N\vec{1}$$
+
+```{r}
+avg_num_plays <- N %*% rep(1, 24) |> t() |> round(2)
+avg_num_plays[,1:8]
+```
+
+## For Individual Teams
+
+```{r}
+# retrieve team that is on offense (at bat)
+retro2016_complete <- retro2016_complete |>
+  mutate(home_team_id = str_sub(game_id, 1, 3),
+         batting_team = if_else(bat_home_id == 0, away_team_id, home_team_id))
+
+# tally states by team
+T_team <- retro2016_complete |> group_by(batting_team, state, new_state) |>  count()
+```
+
+### Toward NOBLETIGER
+
+```{r}
+NOBL <- retro2016_complete |> 
+  filter(state == "111 0") |>
+  group_by(batting_team, state, new_state) |> tally() |> ungroup()
+```
+
+```{r, echo = FALSE, eval = TRUE}
+NOBL |>
+  group_by(batting_team) |>
+  mutate(NOBL_sum = sum(n)) |>
+  ungroup() |>
+  select(batting_team, NOBL_sum) |>
+  distinct() |>
+  gt() |>
+  cols_align(align = "center") |>
+  data_color(columns = NOBL_sum,
+             palette = "inferno") |>
+  tab_header(title = "Toward NOBLETIGERs",
+             subtitle = "count: no outs, bases loaded")
+```
+
+<details>
+<summary>table code</summary>
+
+```{r, echo = TRUE, eval = FALSE}
+NOBL |>
+  group_by(batting_team) |>
+  mutate(NOBL_sum = sum(n)) |>
+  ungroup() |>
+  select(batting_team, NOBL_sum) |>
+  distinct() |>
+  gt() |>
+  cols_align(align = "center") |>
+  data_color(columns = NOBL_sum,
+             palette = "inferno") |>
+  tab_header(title = "Toward NOBLETIGERs",
+             subtitle = "count: no outs, bases loaded")
+```
+
+</details>
+
+> For some of the less common transitions, there is much variability in the counts across teams
+
+### Smoothing Operation
+
+$$p^{\text{EST}} = \frac{n}{n+K}p^{\text{TEAM}} + \frac{K}{n+K}p^{\text{ALL}}$$
+
+* $n$: number of state transitions for TEAM
+* $K$: smoothing parameter (e.g. $K = 1274$)
+
+    - dependent of starting state
+    
+
+## Team Talent
+
+### Bill James $\log_{5}$ model
+
+* $P_{A}$: team A winning percentage
+* $P_{B}$: team B winning percentage
+
+$$P(\text{Team A wins}) = \frac{ \frac{P_{A}}{1-P_{A}}  }{ \frac{P_{A}}{1-P_{A}} + \frac{P_{B}}{1-P_{B}}}$$
+
+* weighted average of *log odds* of winning
+
+### Bradley-Terry Model
+
+* $T_{A}$: team A talent level
+* $T_{B}$: team B talent level
+
+$$P(\text{Team A wins}) = \frac{ \exp(T_{A})  }{ \exp(T_{A})  + \exp(T_{B}) }$$
+
+* similar to *softmax* formulas
+* later: positive correlation
+
+$$\text{more talent} \quad\Rightarrow\quad \text{more wins}$$
+
+## Make a Schedule
+
+```{r}
+make_schedule <- function(teams, k) {
+  # INPUTS:
+      ## teams: vector of team names
+      ## k: number of games played between two teams in the first team’s home park
+  # OUTPUT: tibble with baseball season schedule
+  num_teams <- length(teams)
+  Home <- rep(rep(teams, each = num_teams), k)
+  Visitor <- rep(rep(teams, num_teams), k)
+  tibble(Home = Home, Visitor = Visitor) |>
+    filter(Home != Visitor)
+}
+```
+
+> to construct the schedule for the 1968 season
+
+```{r}
+teams_68 <- Lahman::Teams |>
+  filter(yearID == 1968) |>
+  select(teamID, lgID) |>
+  mutate(teamID = as.character(teamID)) |>
+  group_by(lgID)
+
+schedule <- teams_68 |>
+  group_split() |>
+  set_names(pull(group_keys(teams_68), "lgID")) |>
+  map(~make_schedule(teams = .x$teamID, k = 9)) |>
+  list_rbind(names_to = "lgID")
+```
+"Note that schedule has $\frac{162 \cdot 20}{2}$ rows [permutations], since each game involves two teams.".  For example, we simulate the 1968 Detroit Tigers' schedule as
+
+```{r, echo = FALSE, eval = TRUE}
+schedule |>
+  filter(Home == "DET" | Visitor == "DET") |>
+  mutate(game_num = 1:162, .before = lgID) |>
+  gt() |>
+  cols_align(align = "center") |>
+  tab_header(title = "Detroit Tigers 1968 Schedule",
+             subtitle = "via simple construction") |>
+  tab_style(
+    locations = cells_body(columns = Home, rows = Home == "DET" ),
+    style = list(cell_fill(color = "#FA4616"), cell_text(color = "#0C2340"))) |>
+  tab_style(
+    locations = cells_body(columns = Visitor, rows = Visitor == "DET" ),
+    style = list(cell_fill(color = "#FA4616"), cell_text(color = "#0C2340"))) |>
+  tab_style(
+    locations = cells_body(columns = Home, rows = Home != "DET" ),
+    style = list(cell_fill(color = "#0C2340"), cell_text(color = "#FA4616"))) |>
+  tab_style(
+    locations = cells_body(columns = Visitor, rows = Visitor != "DET" ),
+    style = list(cell_fill(color = "#0C2340"), cell_text(color = "#FA4616")))
+```
+
+<details>
+<summary>table code</summary>
+```{r, echo = TRUE, eval = FALSE}
+schedule |>
+  filter(Home == "DET" | Visitor == "DET") |>
+  mutate(game_num = 1:162, .before = lgID) |>
+  gt() |>
+  cols_align(align = "center") |>
+  tab_header(title = "Detroit Tigers 1968 Schedule",
+             subtitle = "via simple construction") |>
+  tab_style(
+    locations = cells_body(columns = Home, rows = Home == "DET" ),
+    style = list(cell_fill(color = "#FA4616"), cell_text(color = "#0C2340"))) |>
+  tab_style(
+    locations = cells_body(columns = Visitor, rows = Visitor == "DET" ),
+    style = list(cell_fill(color = "#FA4616"), cell_text(color = "#0C2340"))) |>
+  tab_style(
+    locations = cells_body(columns = Home, rows = Home != "DET" ),
+    style = list(cell_fill(color = "#0C2340"), cell_text(color = "#FA4616"))) |>
+  tab_style(
+    locations = cells_body(columns = Visitor, rows = Visitor != "DET" ),
+    style = list(cell_fill(color = "#0C2340"), cell_text(color = "#FA4616")))
+```
+</details>
+
+
+## Compute Win Probabilities
+
+Assume team talent is normally distributed
+
+$$T \sim N(0, 0.2^{2})$$
+
+```{r}
+set.seed(20250611)
+s_talent <- 0.20
+teams_68 <- teams_68 |>
+  mutate(talent = rnorm(10, 0, s_talent))
+
+# increase chances of Cardinals' and Tigers' success
+teams_68$talent[teams_68$teamID == "DET"] <- 0.35
+teams_68$talent[teams_68$teamID == "SLN"] <- 0.31
+
+schedule_talent <- schedule |>
+  inner_join(teams_68, join_by(lgID, Home == teamID)) |>
+  rename(talent_home = talent) |>
+  inner_join(teams_68, join_by(lgID, Visitor == teamID)) |>
+  rename(talent_visitor = talent)
+
+schedule_talent <- schedule_talent |> 
+  mutate(
+    prob_home = exp(talent_home) /
+      (exp(talent_home) + exp(talent_visitor))
+  )
+```
+
+```{r, echo = FALSE, eval = TRUE}
+set.seed(20250611)
+schedule_talent |>
+  filter(Home == "DET" | Visitor == "DET") |>
+  slice_sample(n = 10) |>
+  gt() |>
+  cols_align(align = "center") |>
+  fmt_number(columns = c(talent_home, talent_visitor, prob_home),
+             decimals = 2) |>
+  tab_header(title = "Detroit Tigers 1968 Schedule",
+             subtitle = "sample of 10 games") |>
+  tab_style(
+    locations = cells_body(columns = c(Home, prob_home), rows = Home == "DET" ),
+    style = list(cell_fill(color = "#FA4616"), cell_text(color = "#0C2340"))) |>
+  tab_style(
+    locations = cells_body(columns = Visitor, rows = Visitor == "DET" ),
+    style = list(cell_fill(color = "#FA4616"), cell_text(color = "#0C2340"))) |>
+  tab_style(
+    locations = cells_body(columns = c(Home, prob_home), rows = Home != "DET" ),
+    style = list(cell_fill(color = "#0C2340"), cell_text(color = "#FA4616"))) |>
+  tab_style(
+    locations = cells_body(columns = Visitor, rows = Visitor != "DET" ),
+    style = list(cell_fill(color = "#0C2340"), cell_text(color = "#FA4616")))
+```
+
+<details>
+<summary>table code</summary>
+```{r, echo = TRUE, eval = FALSE}
+set.seed(20250611)
+schedule_talent |>
+  filter(Home == "DET" | Visitor == "DET") |>
+  slice_sample(n = 10) |>
+  gt() |>
+  cols_align(align = "center") |>
+  fmt_number(columns = c(talent_home, talent_visitor, prob_home),
+             decimals = 2) |>
+  tab_header(title = "Detroit Tigers 1968 Schedule",
+             subtitle = "sample of 10 games") |>
+  tab_style(
+    locations = cells_body(columns = c(Home, prob_home), rows = Home == "DET" ),
+    style = list(cell_fill(color = "#FA4616"), cell_text(color = "#0C2340"))) |>
+  tab_style(
+    locations = cells_body(columns = Visitor, rows = Visitor == "DET" ),
+    style = list(cell_fill(color = "#FA4616"), cell_text(color = "#0C2340"))) |>
+  tab_style(
+    locations = cells_body(columns = c(Home, prob_home), rows = Home != "DET" ),
+    style = list(cell_fill(color = "#0C2340"), cell_text(color = "#FA4616"))) |>
+  tab_style(
+    locations = cells_body(columns = Visitor, rows = Visitor != "DET" ),
+    style = list(cell_fill(color = "#0C2340"), cell_text(color = "#FA4616")))
+```
+</details>
+
+
+## Simulate Season
+
+```{r}
+set.seed(20250611)
+schedule_talent <- schedule_talent |>
+  mutate(
+    outcome = rbinom(nrow(schedule_talent), 1, prob_home),
+    winner = if_else(outcome == 1, Home, Visitor)
+)
+```
+
+```{r, echo = FALSE, eval = TRUE}
+set.seed(20250611)
+schedule_talent |>
+  filter(Home == "DET" | Visitor == "DET") |>
+  slice_sample(n = 10) |>
+  gt() |>
+  cols_align(align = "center") |>
+  fmt_number(columns = c(talent_home, talent_visitor, prob_home),
+             decimals = 2) |>
+  tab_header(title = "Detroit Tigers 1968 Schedule",
+             subtitle = "sample of 10 games") |>
+  tab_style(
+    locations = cells_body(columns = c(Home, prob_home), rows = Home == "DET" ),
+    style = list(cell_fill(color = "#FA4616"), cell_text(color = "#0C2340"))) |>
+  tab_style(
+    locations = cells_body(columns = Visitor, rows = Visitor == "DET" ),
+    style = list(cell_fill(color = "#FA4616"), cell_text(color = "#0C2340"))) |>
+  tab_style(
+    locations = cells_body(columns = c(Home, prob_home), rows = Home != "DET" ),
+    style = list(cell_fill(color = "#0C2340"), cell_text(color = "#FA4616"))) |>
+  tab_style(
+    locations = cells_body(columns = Visitor, rows = Visitor != "DET" ),
+    style = list(cell_fill(color = "#0C2340"), cell_text(color = "#FA4616")))
+```
+
+<details>
+<summary>table code</summary>
+```{r, echo = TRUE, eval = FALSE}
+set.seed(20250611)
+schedule_talent |>
+  filter(Home == "DET" | Visitor == "DET") |>
+  slice_sample(n = 10) |>
+  gt() |>
+  cols_align(align = "center") |>
+  fmt_number(columns = c(talent_home, talent_visitor, prob_home),
+             decimals = 2) |>
+  tab_header(title = "Detroit Tigers 1968 Schedule",
+             subtitle = "sample of 10 games") |>
+  tab_style(
+    locations = cells_body(columns = c(Home, prob_home), rows = Home == "DET" ),
+    style = list(cell_fill(color = "#FA4616"), cell_text(color = "#0C2340"))) |>
+  tab_style(
+    locations = cells_body(columns = Visitor, rows = Visitor == "DET" ),
+    style = list(cell_fill(color = "#FA4616"), cell_text(color = "#0C2340"))) |>
+  tab_style(
+    locations = cells_body(columns = c(Home, prob_home), rows = Home != "DET" ),
+    style = list(cell_fill(color = "#0C2340"), cell_text(color = "#FA4616"))) |>
+  tab_style(
+    locations = cells_body(columns = Visitor, rows = Visitor != "DET" ),
+    style = list(cell_fill(color = "#0C2340"), cell_text(color = "#FA4616")))
+```
+</details>
+
+```{r}
+results <- schedule_talent |> 
+  group_by(winner) |>
+  summarize(Wins = n()) |>
+  inner_join(teams_68, by = c("winner" = "teamID"))
+```
+
+
+### Standings
+
+```{r}
+win_league <- function(res) {
+  set.seed(20250611)
+  res |>
+    group_by(lgID) |>
+    mutate(
+      tiebreaker = runif(n = length(talent)),
+      wins_total = Wins + tiebreaker,
+      rank = min_rank(desc(wins_total)),
+      is_winner_lg = wins_total == max(wins_total)
+    )
+}
+sim_1968 <- win_league(results) |>
+  rename(team = winner)
+```
+
+```{r, echo = FALSE, eval = TRUE}
+sim_1968 |>
+  arrange(rank) |>
+  gt() |>
+  cols_align(align = "center") |>
+  data_color(columns = Wins,
+             palette = "inferno") |>
+  fmt_number(columns = c(talent, tiebreaker, wins_total),
+             decimals = 2) |>
+  tab_header(title = "1968 Season Standings",
+             subtitle = "via simulation")
+```
+
+<details>
+<summary>table code</summary>
+```{r, echo = TRUE, eval = FALSE}
+sim_1968 |>
+  arrange(rank) |>
+  gt() |>
+  cols_align(align = "center") |>
+  data_color(columns = Wins,
+             palette = "inferno") |>
+  fmt_number(columns = c(talent, tiebreaker, wins_total),
+             decimals = 2) |>
+  tab_header(title = "1968 Season Standings",
+             subtitle = "via simulation")
+```
+</details>
+
+### Simulate World Series
+
+```{r}
+set.seed(20250611)
+ws_winner <- sim_1968 |>
+  filter(is_winner_lg) |>
+  ungroup() |>
+  mutate(
+    outcome = as.numeric(rmultinom(1, 7, exp(talent))),
+    is_winner_ws = outcome > 3
+  )
+```
+
+```{r, echo = FALSE, eval = TRUE}
+ws_winner |>
+  select(team, Wins, lgID, talent, outcome, is_winner_ws) |>
+  gt() |>
+  cols_align(align = "center") |>
+  fmt_number(columns = talent,
+             decimals = 2) |>
+  tab_header(title = "1968 Post-Season",
+             subtitle = "via simulation") |>
+  tab_style(
+    locations = cells_body(columns = c(team, outcome, is_winner_ws), 
+                           rows = team == "DET" ),
+    style = list(cell_fill(color = "#FA4616"), cell_text(color = "#0C2340"))) |>
+  tab_style(
+    locations = cells_body(columns = c(team, outcome, is_winner_ws), 
+                           rows = team == "SLN" ),
+    style = list(cell_fill(color = "#C41E3A"), cell_text(color = "#0C2340"))) |>
+  tab_style(locations = cells_body(columns = outcome),
+            style = cell_text(weight = "bold"))
+```
+
+<details>
+<summary>table code</summary>
+```{r, echo = TRUE, eval = FALSE}
+ws_winner |>
+  select(team, Wins, lgID, talent, outcome, is_winner_ws) |>
+  gt() |>
+  cols_align(align = "center") |>
+  fmt_number(columns = talent,
+             decimals = 2) |>
+  tab_header(title = "1968 Post-Season",
+             subtitle = "via simulation") |>
+  tab_style(
+    locations = cells_body(columns = c(team, outcome, is_winner_ws), 
+                           rows = team == "DET" ),
+    style = list(cell_fill(color = "#FA4616"), cell_text(color = "#0C2340"))) |>
+  tab_style(
+    locations = cells_body(columns = c(team, outcome, is_winner_ws), 
+                           rows = team == "SLN" ),
+    style = list(cell_fill(color = "#C41E3A"), cell_text(color = "#0C2340"))) |>
+  tab_style(locations = cells_body(columns = outcome),
+            style = cell_text(weight = "bold"))
+```
+</details>
+
+
+## Simulate Many Seasons
+
+We can wrap the previous codes into a `simulate_1968` function
+
+```{r, echo = TRUE, eval = FALSE}
+simulate_1968 <- function(s_talent = 0.20){ ... }
+```
+
+<details>
+<summary>function code</summary>
+```{r}
+simulate_1968 <- function(s_talent = 0.20){
+  teams_68 <- teams_68 |>
+    mutate(talent = rnorm(10, 0, s_talent))
+  
+  # increase chances of Cardinals' and Tigers' success
+  teams_68$talent[teams_68$teamID == "DET"] <- rnorm(1, 0.3, 0.05)
+  teams_68$talent[teams_68$teamID == "SLN"] <- rnorm(1, 0.27, 0.04)
+  
+  schedule_talent <- schedule |>
+    inner_join(teams_68, join_by(lgID, Home == teamID)) |>
+    rename(talent_home = talent) |>
+    inner_join(teams_68, join_by(lgID, Visitor == teamID)) |>
+    rename(talent_visitor = talent)
+  
+  schedule_talent <- schedule_talent |> 
+    mutate(
+      prob_home = exp(talent_home) /
+        (exp(talent_home) + exp(talent_visitor))
+    )
+  
+  schedule_talent <- schedule_talent |>
+    mutate(
+      outcome = rbinom(nrow(schedule_talent), 1, prob_home),
+      winner = if_else(outcome == 1, Home, Visitor)
+    )
+  
+  results <- schedule_talent |> 
+    group_by(winner) |>
+    summarize(Wins = n()) |>
+    inner_join(teams_68, by = c("winner" = "teamID"))
+}
+```
+</details>
+
+and use the `rep` function to simulate 100 copies of the 1968 season.
+
+```{r}
+set.seed(20250611)
+many_results <- rep(0.20, 100) |>
+  map(simulate_1968) |>
+  list_rbind() |>
+  rename(team = winner)
+```
+
+```{r, echo = FALSE, eval = TRUE}
+title_text <- "<span style='color:#0C2340'>Simulations of **1968 MLB Season**</span>"
+subtitle_text <- "with focus on the highly talented <span style='color:#FA4616'>**Detroit Tigers**</span> team"
+
+many_results |>
+  ggplot() +
+  geom_point(aes(x = talent, y = Wins),
+             alpha = 0.2,
+             color = "#0C2340",
+             data = many_results |>
+               filter(team != "DET")) +
+  geom_point(aes(x = talent, y = Wins),
+             alpha = 0.6,
+             size = 3,
+             color = "#FA4616",
+             data = many_results |>
+               filter(team == "DET")) +
+  labs(title = title_text,
+       subtitle = subtitle_text,
+       caption = "DSLC") +
+  theme_minimal() +
+  theme(plot.subtitle = ggtext::element_markdown(),
+        plot.title = ggtext::element_markdown()) +
+  xlim(-1,1)
+```
+
+<details>
+<summary>graph code</summary>
+```{r, echo = TRUE, eval = FALSE}
+title_text <- "<span style='color:#0C2340'>Simulations of **1968 MLB Season**</span>"
+subtitle_text <- "with focus on the highly talented <span style='color:#FA4616'>**Detroit Tigers**</span> team"
+
+many_results |>
+  ggplot() +
+  geom_point(aes(x = talent, y = Wins),
+             alpha = 0.2,
+             color = "#0C2340",
+             data = many_results |>
+               filter(team != "DET")) +
+  geom_point(aes(x = talent, y = Wins),
+             alpha = 0.6,
+             size = 3,
+             color = "#FA4616",
+             data = many_results |>
+               filter(team == "DET")) +
+  labs(title = title_text,
+       subtitle = subtitle_text,
+       caption = "DSLC") +
+  theme_minimal() +
+  theme(plot.subtitle = ggtext::element_markdown(),
+        plot.title = ggtext::element_markdown()) +
+  xlim(-1,1)
+```
+</details>
+
+* average team $T = 0$ tend to win about 81 games.
+* positive correlation: more talent $\Rightarrow$ more wins
+
+
+### Parity
+
+> What is the relationship between a team’s talent and its post-season success?
+
+```{r}
+set.seed(20250611)
+many_results <- rep(0.20, 100) |>
+  map(abdwr3edata::one_simulation_68) |>
+  list_rbind()
+```
+
+$$P(\text{win championship}|T) = \frac{e^{a+bT}}{1 + e^{a+bT}}$$
+
+```{r}
+fit1 <- glm(
+  Winner.Lg ~ Talent,
+  data = many_results, family = binomial
+)
+fit2 <- glm(
+  Winner.WS ~ Talent,
+  data = many_results, family = binomial
+)
+```
+
+```{r, echo = FALSE, eval = TRUE}
+tdf <- tibble(
+  Talent =  seq(-0.4, 0.4, length.out = 100)
+)
+
+title_text <- "**Championship Probability** versus **Team Talent**"
+subtitle_text <- "<span style='color:#0C2340'>**Pennant Probabilities**</span> and <span style='color:#FA4616'>**World Series Probabilities**</span>"
+
+tdf |>
+  mutate(
+    Pennant = predict(fit1, newdata = tdf, type = "response"),
+    `World Series` = predict(fit2, newdata = tdf, type = "response")
+  ) |>
+  pivot_longer(
+    cols = -Talent,
+    names_to = "Outcome", 
+    values_to = "Probability"
+  ) |>
+  ggplot(aes(Talent, Probability, color = Outcome)) +
+  geom_line(linewidth = 3) +
+  labs(title = title_text,
+       subtitle = subtitle_text,
+       caption = "DSLC") +
+  scale_color_manual(values = c("#0C2340", "#FA4616")) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        plot.subtitle = ggtext::element_markdown(hjust = 1.0),
+        plot.title = ggtext::element_markdown(hjust = 1.0)) +
+  ylim(0, 0.65)
+```
+
+<details>
+<summary>graph code</summary>
+```{r, echo = TRUE, eval = FALSE}
+tdf <- tibble(
+  Talent =  seq(-0.4, 0.4, length.out = 100)
+)
+
+title_text <- "**Championship Probability** versus **Team Talent**"
+subtitle_text <- "<span style='color:#0C2340'>**Pennant Probabilities**</span> and <span style='color:#FA4616'>**World Series Probabilities**</span>"
+
+tdf |>
+  mutate(
+    Pennant = predict(fit1, newdata = tdf, type = "response"),
+    `World Series` = predict(fit2, newdata = tdf, type = "response")
+  ) |>
+  pivot_longer(
+    cols = -Talent,
+    names_to = "Outcome", 
+    values_to = "Probability"
+  ) |>
+  ggplot(aes(Talent, Probability, color = Outcome)) +
+  geom_line(linewidth = 3) +
+  labs(title = title_text,
+       subtitle = subtitle_text,
+       caption = "DSLC") +
+  scale_color_manual(values = c("#0C2340", "#FA4616")) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        plot.subtitle = ggtext::element_markdown(hjust = 1.0),
+        plot.title = ggtext::element_markdown(hjust = 1.0)) +
+  ylim(0, 0.65)
+```
+</details>
+
+
