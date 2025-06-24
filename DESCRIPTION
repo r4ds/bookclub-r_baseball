@@ -14,9 +14,10 @@ Imports:
     here,
     Lahman,
     remotes,
-    rmarkdown,
+    rmarkdown, 
     tidyverse,
-    ggrepel,
+    ggrepel, 
+    ggstatsplot, 
     gt,
     ggtext
 Remotes: 
