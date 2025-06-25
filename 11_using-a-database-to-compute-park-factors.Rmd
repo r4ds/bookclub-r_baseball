@@ -481,7 +481,7 @@ ev_compare |>
 
 How has the PF (Park Factors) rating change since?
 
-![Savanat Park Factors 2025](images/baseball_savant_park_factors.png)
+![Savant Park Factors 2025](images/baseball_savant_park_factors.png)
 
 ## Applying park factors
 
