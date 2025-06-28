@@ -14,7 +14,7 @@ editor_options:
 -   Using MySQL (PostgreSQL)
 -   Launch Angles and Velocities, Revisited
 
-```{r setup_ch_11, message = FALSE, warning = FALSE}
+```{r setup_ch_12, message = FALSE, warning = FALSE}
 suppressMessages(library(tidyverse))
 # library(RPostgres) # using PostgreSQL instead of MariaDB
 library(abdwr3edata)
