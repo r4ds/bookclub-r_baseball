@@ -10,7 +10,8 @@ Depends:
 Imports:
     abdwr3edata,
     bookdown,
-    baseballr,
+    baseballr, 
+    fs, 
     here, 
     Hmisc, 
     Lahman,
