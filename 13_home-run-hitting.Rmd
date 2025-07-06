@@ -1,5 +1,12 @@
 # Home Run Hitting
 
+```{r, include = FALSE }
+library(abdwr3edata)
+library(mgcv)
+library(metR)
+library(tidyverse)
+```
+
 **Learning objectives:**
 
 - THESE ARE NICE TO HAVE BUT NOT ABSOLUTELY NECESSARY
@@ -8,3 +15,141 @@
 
 - ADD SLIDES AS SECTIONS (`##`).
 - TRY TO KEEP THEM RELATIVELY SLIDE-LIKE; THESE ARE NOTES, NOT THE BOOK ITSELF.
+
+
+## Read in data
+
+-  This file must be created, and is about 35 MB.
+
+```{r, eval= FALSE}
+sc_two_seasons <- here::here("data_large/sc_bip_2021_2023.rds") |>
+  read_rds() |> 
+  mutate(
+    Season = year(game_date),
+    HR = ifelse(events == "home_run", 1, 0)
+  )
+sc_2023 <- sc_two_seasons |> 
+  filter(Season == 2023)
+glimpse(sc_2023)
+```
+```{r}
+S <- sc_2023 |> 
+  summarize(
+    BIP = n(),
+    HR = sum(events == "home_run")
+  ) |> 
+  mutate(HR_Rate = 100 * HR / BIP)
+S
+```
+
+
+Fit gam:
+
+```{r}
+library(mgcv)
+fit_23 <- gam(
+  HR ~ s(launch_angle, launch_speed),
+  family = binomial,
+  data = sc_2023
+)
+```
+
+
+check
+
+```{r}
+fit_23 |>
+  predict(
+    newdata = data.frame(
+      launch_speed = 105, 
+      launch_angle = 25
+    ),
+    type = "response"
+  )
+```
+
+plot
+
+```{r}
+grid <- expand_grid(
+  launch_angle = seq(15, 40, length = 50),
+  launch_speed = seq(90, 110, length = 50)
+)
+hats <- fit_23 |>
+  predict(newdata = grid, type = "response")
+grid <- grid |>
+  mutate(prob = hats)
+
+ggplot(grid) +
+  geom_contour_fill(
+    aes(
+      x = launch_angle,
+      y = launch_speed,
+      z = prob
+    ),
+    breaks = c(0, .1, .3, .5, .7, .9, 1),
+    linewidth = 1.5
+  ) +
+  scale_fill_viridis_c(option = "H") + 
+  theme(text = element_text(size = 18)) +
+  labs(x = "Launch Angle", y = "Launch Speed") +
+  guides(fill = guide_legend(title = "Prob (HR)"))
+```
+
+
+
+## Temperature effects
+
+```{r}
+temps_parks_2023 <- temps_2023 |>
+  inner_join(parks_2023, by = c("Park"))
+sc_2023 <- sc_2023 |>
+  inner_join(temps_parks_2023, by = "game_pk")
+```
+
+```{r}
+temp_hr <- filter(sc_2023, Dome == "No") |> 
+  group_by(temperature) |> 
+  summarize(
+    BIP = n(),
+    HR = sum(HR, na.rm = TRUE)
+  ) |> 
+  mutate(HR_Rate = 100 * HR / BIP)
+temp_hr |>
+  filter(temperature >= 55, temperature <= 90) |>
+  ggplot(aes(temperature, HR_Rate)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = "y ~ x") +
+  labs(
+    x = "Temperature (deg F)",
+    y = "Home Run Rate"
+  )
+```
+
+## Spray angle
+
+```{r}
+sc_2023 <- sc_2023 |> 
+  mutate(
+    location_x = 2.5 * (hc_x - 125.42),
+    location_y = 2.5 * (198.27 - hc_y),
+    spray_angle = atan(location_x / location_y) * 180 / pi
+  )
+sc_hr <- sc_2023 |>
+  filter(events == "home_run")
+
+ggplot(sc_hr, aes(spray_angle, hit_distance_sc)) +
+  geom_point(alpha = 0.25)
+```
+
+## Pitcher or batter
+
+```{r}
+library(lme4)
+fit <- glmer(
+  HR ~ (1 | pitcher) + (1 | batter),
+  data = sc_2023,
+  family = binomial
+)
+VarCorr(fit)
+```
