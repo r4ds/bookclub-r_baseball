@@ -5,6 +5,7 @@ library(abdwr3edata)
 library(mgcv)
 library(metR)
 library(tidyverse)
+library(arrow)
 ```
 
 **Learning objectives:**
@@ -16,7 +17,9 @@ library(tidyverse)
    
 - Compare 2021 and 2023 season
 
-## Exploring a Season of Home Run Hitting {-}
+[Chapter reference](https://beanumber.github.io/abdwr3e/13-homeruns.html)
+
+## Getting the Data {-}
 
 - Book uses a data file called 'sc_bip_2021_2023.rds' which is not included. 
 
@@ -31,6 +34,7 @@ library(tidyverse)
 library(abdwr3edata)
 library(tidyverse)
 library(fs)
+library(arrow)
 data_dir <- here::here("data_large")
 statcast_dir <- path(data_dir, "statcast_csv")
 if (!dir.exists(statcast_dir)) {
@@ -46,14 +50,14 @@ sc_bip_2021_2023 <- bind_rows(sc2021_bip, sc2023_bip) |>
                     select(game_pk, game_date, batter, pitcher, events, 
                           stand, p_throws, hit_distance_sc, hc_x, hc_y, 
                           launch_speed, launch_angle, home_team, away_team, Season, HR)
-write_rds(sc_bip_2021_2023, "data_large/sc_bip_2021_2023.rds")
+write_parquet(sc_bip_2021_2023, "data/sc_bip_2021_2023.parquet")
 ```
 
 ## Read in data {-}
 
 ```{r}
-sc_two_seasons <- here::here("data_large/sc_bip_2021_2023.rds") |>
-  read_rds() |> 
+sc_two_seasons <- here::here("data/sc_bip_2021_2023.parquet") |>
+  read_parquet() |> 
   mutate(
     Season = year(game_date),
     HR = ifelse(events == "home_run", 1, 0)
@@ -85,9 +89,7 @@ $ HR              <dbl> 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0,
 ```
 
 
-- This is still a large-ish (35MB) file, so not included in bookclub repo. 
- 
-- Plan is to copy static results into RMD before pushing
+- Parquet format allows us to include the data in the repo! (3.4 MB)
 
 ## Home runs and launch variables {-}
 
@@ -95,10 +97,12 @@ $$
 \log(\frac{\text{Pr}(HR)}{1-\text{Pr}(HR)}) = s(LA, LS)
 $$
 - Logistic GAM regression of probability of a Home Run vs:
+
    - LA : Launch angle
+   
    - LS : Launch speed
    
-- `s` is used in GAM to indicate smooth function of the two measurements.
+- `s` is used in GAM to indicate a smooth function of the two measurements.
 
 ```{r}
 library(mgcv)
@@ -168,14 +172,11 @@ sc_2023 |>
 
 - Add in temperature data (included in `abdwr3edata` package)
 
+- Also need to focus on outside parks, so include park data (also in package)
+
 ```{r}
 temps_parks_2023 <- temps_2023 |> inner_join(parks_2023, by = c("Park"))
 sc_2023 <- sc_2023 |> inner_join(temps_parks_2023, by = "game_pk")
-```
-
-Focus on stadiums that are actually exposed to the outside, and plot:
-
-```{r}
 temp_hr <- filter(sc_2023, Dome == "No") |> 
   group_by(temperature) |> 
   summarize(
@@ -271,7 +272,7 @@ $$
 - In `lme4` (and others) this is expressed as: 
 
 
-```{r, warning=FALSE}
+```{r, warning=FALSE, message = FALSE}
 library(lme4)
 fit <- glmer(
   HR ~ (1 | pitcher) + (1 | batter),
@@ -357,7 +358,7 @@ bin_plot <- function(S, LA_breaks, LS_breaks, label) {
 }
 ```
 
-## Example {-}
+## Example 2023 HR by bin {-}
 
 ```{r}
 LA_breaks <- seq(20, 40, by = 5)
@@ -369,6 +370,11 @@ S <- sc_2023 |>
 bin_plot(S, LA_breaks, LS_breaks, HR)
 ```
 
+## 2023 HR Rate by Bin {-}
+
+```{r}
+bin_plot(S, LA_breaks, LS_breaks, label = paste(round(HR_Rate, 0), "%", sep = ""))
+```
 
 ## Compare between seasons {-}
 
@@ -407,11 +413,12 @@ d_BIP <- S2 |>
     label = round(d_BIP_logits, 2)
   )
 ```
+
 - Are these significant? Question for reader ;)
 
 ## Changes in carry? {-}
 
-- Given launch variables, how has chance BIP becomes HR?
+- Given launch variables, how has probability BIP becomes HR changed?
 
 
 ```{r}
@@ -441,8 +448,9 @@ d_{logit} &= \log \left( \frac{R_{2023}}{100 - R_{2023}}\right) - \log \left( \f
 \end{aligned}
 $$
 
+- $d_{logit} = log(\text{odds_ratio})$
 
-- So for example a decrease of $d_{logit}$ of -.61 corresponds to an change in the 'odds' ratio:
+- So for example a decrease of $d_{logit}$ of -.61 corresponds to an 'odds' ratio:
 
 ```{r}
 exp(-.61)
@@ -452,18 +460,5 @@ exp(-.61)
 - Book claims this is compensated by more balls hit hard.
 
 
-## Extra {-}
-
-Future
-
-```{r, eval= FALSE}
-library(brms)
-fit <- brm(
-  HR ~ Season + s(launch_angle, launch_speed, by = Season),
-  family = bernoulli(),
-  data = sc_two_seasons,
-  cores = 4, chains = 4
-)
-```
 
 
