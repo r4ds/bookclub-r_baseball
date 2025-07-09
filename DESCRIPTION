@@ -21,7 +21,10 @@ Imports:
     ggrepel, 
     ggstatsplot, 
     gt,
-    ggtext
+    ggtext,
+    metR,
+    arrow,
+    mgcv
 Remotes: 
     beanumber/abdwr3edata
 Encoding: UTF-8
