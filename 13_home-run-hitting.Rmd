@@ -23,14 +23,14 @@ library(arrow)
 
 - Book uses a data file called 'sc_bip_2021_2023.rds' which is not included. 
 
-- Following the guidance of chapter 21, it can be created 
+- Following the guidance of chapter 12, it can be created 
    - Pull down statcast data (takes some time!)
    - Filter to BIP and reduce columns
    - Combine and save as RDS file.
 
 ## Code for creating the data file {-}
 
-```{r, eval = FALSE}
+``` 
 library(abdwr3edata)
 library(tidyverse)
 library(fs)
@@ -49,7 +49,7 @@ sc2023_bip <- sc2023 |> filter(type == "X")
 sc_bip_2021_2023 <- bind_rows(sc2021_bip, sc2023_bip) |>
                     select(game_pk, game_date, batter, pitcher, events, 
                           stand, p_throws, hit_distance_sc, hc_x, hc_y, 
-                          launch_speed, launch_angle, home_team, away_team, Season, HR)
+                          launch_speed, launch_angle, home_team, away_team)
 write_parquet(sc_bip_2021_2023, "data/sc_bip_2021_2023.parquet")
 ```
 
@@ -248,7 +248,7 @@ ggplot(pf, aes(Park_Factor, home_team)) +
 ```
 
 - Blue line indicates 'neutral'
-- Standouts: TEX and NYY > 1.5 ! 
+- Standouts: TEX   > 1.5 ! 
 
 ## Pitcher or batter ? {-}
 
