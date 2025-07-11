@@ -1,10 +1,464 @@
 # Home Run Hitting
 
+```{r, include = FALSE }
+library(abdwr3edata)
+library(mgcv)
+library(metR)
+library(tidyverse)
+library(arrow)
+```
+
 **Learning objectives:**
 
-- THESE ARE NICE TO HAVE BUT NOT ABSOLUTELY NECESSARY
+- Examine some of the factors that determine home runs:
+   - Launch angle and Exit Velocity
+   - Spray Angle
+   - Park effects
+   
+- Compare 2021 and 2023 season
 
-## SLIDE 1 {-}
+[Chapter reference](https://beanumber.github.io/abdwr3e/13-homeruns.html)
 
-- ADD SLIDES AS SECTIONS (`##`).
-- TRY TO KEEP THEM RELATIVELY SLIDE-LIKE; THESE ARE NOTES, NOT THE BOOK ITSELF.
+## Getting the Data {-}
+
+- Book uses a data file called 'sc_bip_2021_2023.rds' which is not included. 
+
+- Following the guidance of chapter 12, it can be created 
+   - Pull down statcast data (takes some time!)
+   - Filter to BIP and reduce columns
+   - Combine and save as RDS file.
+
+## Code for creating the data file {-}
+
+``` 
+library(abdwr3edata)
+library(tidyverse)
+library(fs)
+library(arrow)
+data_dir <- here::here("data_large")
+statcast_dir <- path(data_dir, "statcast_csv")
+if (!dir.exists(statcast_dir)) {
+  dir.create(statcast_dir)
+}
+statcast_season(year = 2023, dir = statcast_dir)
+statcast_season(year = 2021, dir = statcast_dir)
+sc2023 <- statcast_dir |> statcast_read_csv(pattern = "2023.+\\.csv")
+sc2021 <- statcast_dir |> statcast_read_csv(pattern = "2021.+\\.csv")
+sc2021_bip <- sc2021 |> filter(type == "X") 
+sc2023_bip <- sc2023 |> filter(type == "X") 
+sc_bip_2021_2023 <- bind_rows(sc2021_bip, sc2023_bip) |>
+                    select(game_pk, game_date, batter, pitcher, events, 
+                          stand, p_throws, hit_distance_sc, hc_x, hc_y, 
+                          launch_speed, launch_angle, home_team, away_team)
+write_parquet(sc_bip_2021_2023, "data/sc_bip_2021_2023.parquet")
+```
+
+## Read in data {-}
+
+```{r}
+sc_two_seasons <- here::here("data/sc_bip_2021_2023.parquet") |>
+  read_parquet() |> 
+  mutate(
+    Season = year(game_date),
+    HR = ifelse(events == "home_run", 1, 0)
+  )
+sc_2023 <- sc_two_seasons |> 
+  filter(Season == 2023)
+
+```
+
+```
+Rows: 124,234
+Columns: 16
+$ game_pk         <dbl> 718773, 718774, 718773, 718778, 718781, 718778, 718772, 718770, 718776, 718778, 718…
+$ game_date       <date> 2023-03-30, 2023-03-30, 2023-03-30, 2023-03-30, 2023-03-30, 2023-03-30, 2023-03-30…
+$ batter          <dbl> 613564, 643446, 641584, 453568, 527038, 592178, 665489, 502110, 670623, 602074, 663…
+$ pitcher         <dbl> 656605, 645261, 656605, 605483, 543037, 605483, 571945, 668678, 593958, 605483, 669…
+$ events          <chr> "triple", "single", "single", "single", "grounded_into_double_play", "field_out", "…
+$ stand           <chr> "L", "L", "L", "L", "R", "R", "R", "R", "R", "R", "L", "L", "R", "L", "L", "R", "R"…
+$ p_throws        <chr> "R", "R", "R", "L", "R", "L", "R", "R", "L", "L", "R", "R", "L", "R", "R", "R", "R"…
+$ hit_distance_sc <dbl> 134, 9, 254, 162, 51, 56, 42, 185, 143, 171, 240, 374, 356, 65, 392, 116, 422, 188,…
+$ hc_x            <dbl> 215.08, 164.78, 196.95, 90.66, 110.24, 153.95, 184.78, 177.78, 116.88, 177.33, 73.8…
+$ hc_y            <dbl> 107.23, 105.10, 95.17, 133.88, 148.44, 209.01, 100.21, 106.58, 74.73, 114.14, 117.8…
+$ launch_speed    <dbl> 94.2, 93.7, 111.7, 59.1, 94.8, 69.5, 115.5, 102.7, 105.7, 93.8, 93.4, 96.4, 93.5, 8…
+$ launch_angle    <dbl> 9, -19, 13, 27, 1, 81, -2, 9, 7, 9, 55, 28, 25, 76, 35, 6, 26, 12, 9, 32, -2, 1, -3…
+$ home_team       <chr> "CIN", "MIA", "CIN", "SD", "NYY", "SD", "STL", "LAD", "TB", "SD", "SEA", "MIA", "TB…
+$ away_team       <chr> "PIT", "NYM", "PIT", "COL", "SF", "COL", "TOR", "AZ", "DET", "COL", "CLE", "NYM", "…
+$ Season          <dbl> 2023, 2023, 2023, 2023, 2023, 2023, 2023, 2023, 2023, 2023, 2023, 2023, 2023, 2023,…
+$ HR              <dbl> 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,…
+```
+
+
+- Parquet format allows us to include the data in the repo! (3.4 MB)
+
+## Home runs and launch variables {-}
+
+$$
+\log(\frac{\text{Pr}(HR)}{1-\text{Pr}(HR)}) = s(LA, LS)
+$$
+- Logistic GAM regression of probability of a Home Run vs:
+
+   - LA : Launch angle
+   
+   - LS : Launch speed
+   
+- `s` is used in GAM to indicate a smooth function of the two measurements.
+
+```{r}
+library(mgcv)
+fit_23 <- gam(
+  HR ~ s(launch_angle, launch_speed),
+  family = binomial,
+  data = sc_2023
+)
+```
+
+
+We can get predictions from the model:
+
+```{r}
+fit_23 |>
+  predict(
+    newdata = data.frame(
+      launch_speed = 105, 
+      launch_angle = 25
+    ),
+    type = "response"
+  )
+```
+
+## Plot of model  {-}
+
+```{r}
+grid <- expand_grid(
+  launch_angle = seq(15, 40, length = 50),
+  launch_speed = seq(90, 110, length = 50)
+)
+hats <- fit_23 |>
+  predict(newdata = grid, type = "response")
+grid <- grid |>
+  mutate(prob = hats)
+
+ggplot(grid) +
+  geom_contour_fill(
+    aes( x = launch_angle, y = launch_speed, z = prob),
+    breaks = c(0, .1, .3, .5, .7, .9, 1),
+    linewidth = 1.5
+  ) +
+  scale_fill_viridis_c(option = "H") + 
+  theme(text = element_text(size = 18)) +
+  labs(x = "Launch Angle", y = "Launch Speed") +
+  guides(fill = guide_legend(title = "Prob (HR)"))
+```
+
+## Optimal launch angle? {-}
+
+- Previous graph suggests:
+   - Higher launch speed always better
+   - But for launch angle, there is an optimal
+- Focus on 100-105 mph balls:
+
+```{r}
+sc_2023 |>
+  filter(launch_speed >= 100, launch_speed <= 105) |>
+  ggplot(aes(x = launch_angle, y = HR)) + geom_smooth(method = "gam") +
+      scale_y_continuous( "Probability of a Home Run", limits = c(0, 1)) +
+      scale_x_continuous( "Launch Angle (degrees)", limits = c(10, 50))
+```
+ 
+## Temperature effects {-}
+
+- Conventional wisdom: warmer temps -> more home runs. 
+
+- Add in temperature data (included in `abdwr3edata` package)
+
+- Also need to focus on outside parks, so include park data (also in package)
+
+```{r}
+temps_parks_2023 <- temps_2023 |> inner_join(parks_2023, by = c("Park"))
+sc_2023 <- sc_2023 |> inner_join(temps_parks_2023, by = "game_pk")
+temp_hr <- filter(sc_2023, Dome == "No") |> 
+  group_by(temperature) |> 
+  summarize(
+    BIP = n(),
+    HR = sum(HR, na.rm = TRUE)
+  ) |> 
+  mutate(HR_Rate = 100 * HR / BIP)
+```
+
+```{r, echo=FALSE}
+temp_hr |>
+  filter(temperature >= 55, temperature <= 90) |>
+  ggplot(aes(temperature, HR_Rate)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = "y ~ x") +
+  labs(x = "Temperature (deg F)", y = "Home Run Rate")
+```
+
+- Seems to hold up. A linear fit yields about 0.04% increase per degree (4.65% at 70)
+
+## Spray angle {-}
+
+```{r}
+sc_2023 <- sc_2023 |> 
+  mutate(location_x = 2.5 * (hc_x - 125.42),
+         location_y = 2.5 * (198.27 - hc_y),
+         spray_angle = atan(location_x / location_y) * 180 / pi
+  )
+sc_hr <- sc_2023 |> filter(events == "home_run")
+
+ggplot(sc_hr, aes(spray_angle, hit_distance_sc)) +
+  geom_point(alpha = 0.25)
+```
+
+## Home runs spray vs batting side {-}
+
+```{r}
+ggplot(sc_hr, aes(spray_angle)) +
+  geom_density() +
+  facet_wrap(vars(stand), ncol = 1)
+```
+
+- Confirms that batters tend to hit home runs in "pull" direction.
+- Also note that Left handers tend to pull stronger!
+
+## Ball park effects (reprise) {-}
+
+- Compute home and away HRs for each team
+- Compute park factor as ratio of home HRs to away HRs.
+
+```{r}
+sc_home <- sc_2023 |> 
+  group_by(home_team) |> 
+  summarize(HR = sum(HR))
+sc_away <- sc_2023 |> 
+  group_by(away_team) |> 
+  summarize(HR = sum(HR))
+pf <- sc_home |>
+  inner_join(sc_away, join_by(home_team == away_team)) |> 
+  mutate(Park_Factor = HR.x / HR.y)
+```
+
+## Park Factor Plot {-}
+
+```{r, echo= FALSE}
+ggplot(pf, aes(Park_Factor, home_team)) +
+  geom_point() +
+  geom_vline(xintercept = 1, color = "blue")
+```
+
+- Blue line indicates 'neutral'
+- Standouts: TEX   > 1.5 ! 
+
+## Pitcher or batter ? {-}
+
+- Are home runs about the hitter or pitcher?
+
+- One way to address: use random effects model. 
+
+$$
+\log \left(\frac{p}{1-p}\right) = \mu + \beta_i + \gamma_j
+$$
+
+-  $\mu$ is the overall effect
+-  $\beta_i$ is the effect due to the $i$th hitter 
+-  $\gamma_j$ is the effect due to the $j$th pitcher. 
+-  $\beta$ and $\gamma$ are both assumed to be normally distributed:
+    - $\beta_i \sim N(0,\sigma_h)$
+    - $\gamma_j \sim N(0,\sigma_p)$
+
+## Fitting the model {-}
+
+- In `lme4` (and others) this is expressed as: 
+
+
+```{r, warning=FALSE, message = FALSE}
+library(lme4)
+fit <- glmer(
+  HR ~ (1 | pitcher) + (1 | batter),
+  data = sc_2023,
+  family = binomial
+)
+VarCorr(fit)  # get sigma_p and sigma_b
+```
+
+-  Results suggest more of the variation in home runs is due to batter effects then pitcher effects. 
+
+## Comparing Home run hitting accross seasons {-}
+
+- Home run hitting in 2021 and 2023 seem similar: about 1.2 home runs per game
+- However, there might be differences when considering launch properties
+- Approach:
+    - Bin the launch variable space (LA / LS) 
+    - Examine changes in home runs / balls in play / rates of both
+    
+## Definitions {-}
+
+$$
+BIP \, Rate = 100 \times \frac{BIP}{N},
+$$
+
+$$
+HR \, Rate = 100 \times \frac{HR}{BIP}.
+$$
+
+## Binning launch variables {-}
+
+```{r}
+bin_rates <- function(sc_ip, LA_breaks, LS_breaks) {
+  Total_BIP <- nrow(sc_ip)
+  sc_ip |> 
+    mutate(
+      LS = cut(launch_speed, breaks = LS_breaks),
+      LA = cut(launch_angle, breaks = LA_breaks)
+    ) |> 
+    filter(!is.na(LA), !is.na(LS)) |> 
+    group_by(LA, LS) |> 
+    summarize(
+      BIP = n(),
+      HR = sum(HR),
+      .groups = "drop"
+    ) |> 
+    mutate(
+      BIP_Rate = 100 * BIP / Total_BIP,
+      HR_Rate = 100 * HR / BIP
+    ) 
+}
+```
+
+
+## Function to plot results {-}
+```{r}
+compute_bin_midpoint <- function(x) {
+  x |>
+    as.character() |>
+    str_split_1(",") |>
+    map_dbl(parse_number) |>
+    mean()
+}
+
+bin_plot <- function(S, LA_breaks, LS_breaks, label) {
+  S |> 
+    mutate(
+      la = map_dbl(LA, compute_bin_midpoint),
+      ls = map_dbl(LS, compute_bin_midpoint)
+    ) |>
+    ggplot(aes(x = la, y = ls)) + 
+    geom_text(aes(label = {{label}}), size = 8) +
+    geom_vline(
+      xintercept = LA_breaks,
+      color = "blue"
+    ) +
+    geom_hline(
+      yintercept = LS_breaks,
+      color = "blue"
+    ) +
+    theme(text = element_text(size = 18)) +
+    labs(x = "Launch Angle", y = "Launch Speed") 
+}
+```
+
+## Example 2023 HR by bin {-}
+
+```{r}
+LA_breaks <- seq(20, 40, by = 5)
+LS_breaks <- seq(95, 110, by = 5)
+
+S <- sc_2023 |>
+  bin_rates(LA_breaks, LS_breaks)
+
+bin_plot(S, LA_breaks, LS_breaks, HR)
+```
+
+## 2023 HR Rate by Bin {-}
+
+```{r}
+bin_plot(S, LA_breaks, LS_breaks, label = paste(round(HR_Rate, 0), "%", sep = ""))
+```
+
+## Compare between seasons {-}
+
+```{r}
+S2 <- sc_two_seasons |>
+  group_split(Season) |>
+  map(bin_rates, LA_breaks, LS_breaks) |>
+  set_names(c(2021, 2023)) |>
+  list_rbind(names_to = "year")
+```
+
+
+- Compare rates on logit scale to avoid endpoint issues
+
+
+```{r}
+logit <- function(x){
+  log(x) - log(100 - x)
+}
+
+d_BIP <- S2 |>
+  select(year, LA, LS, BIP_Rate) |>
+  pivot_wider(
+    names_from = year, names_prefix = "y",
+    values_from = BIP_Rate
+  ) |>
+  mutate(d_BIP_logits = logit(y2023) - logit(y2021))
+```
+
+## Difference in BIP logits {-}
+
+```{r}
+  d_BIP |>
+  bin_plot(
+    LA_breaks, LS_breaks, 
+    label = round(d_BIP_logits, 2)
+  )
+```
+
+- Are these significant? Question for reader ;)
+
+## Changes in carry? {-}
+
+- Given launch variables, how has probability BIP becomes HR changed?
+
+
+```{r}
+S2 |>
+  select(year, LA, LS, HR_Rate) |>
+  pivot_wider(
+    names_from = year, names_prefix = "y",
+    values_from = HR_Rate
+  ) |>
+  mutate(d_HR_logits = logit(y2023) - logit(y2021)) |>
+  bin_plot(
+    LA_breaks, LS_breaks, 
+    label = round(d_HR_logits, 2)
+  )
+```
+
+- Biggest change is in 30-35 launch angle.  
+
+## Interpretation {-}
+
+- Note :
+
+$$
+\begin{aligned}
+d_{logit} &= \log \left( \frac{R_{2023}}{100 - R_{2023}}\right) - \log \left( \frac{R_{2021}}{100 - R_{2021}}\right) \\
+          &= \log \left( \frac{R_{2023} / (100 - R_{2023})} {R_{2021}/(100 - R_{2021})}\right) \\
+\end{aligned}
+$$
+
+- $d_{logit} = log(\text{odds_ratio})$
+
+- So for example a decrease of $d_{logit}$ of -.61 corresponds to an 'odds' ratio:
+
+```{r}
+exp(-.61)
+```
+- So the odds went down by about a factor of 2.
+
+- Book claims this is compensated by more balls hit hard.
+
+
+
+
