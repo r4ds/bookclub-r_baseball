@@ -9,22 +9,22 @@ Depends:
     R (>= 3.1.0)
 Imports:
     abdwr3edata,
-    bookdown,
-    baseballr, 
-    fs, 
-    here, 
-    Hmisc, 
-    Lahman,
-    remotes,
-    rmarkdown, 
-    tidyverse,
-    ggrepel, 
-    ggstatsplot, 
-    gt,
-    ggtext,
-    metR,
     arrow,
-    mgcv
+    baseballr,
+    bookdown,
+    fs,
+    ggrepel,
+    ggstatsplot,
+    ggtext,
+    gt,
+    here,
+    Hmisc,
+    Lahman,
+    metR,
+    mgcv,
+    remotes,
+    rmarkdown,
+    tidyverse
 Remotes: 
     beanumber/abdwr3edata
 Encoding: UTF-8
