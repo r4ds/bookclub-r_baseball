@@ -2,9 +2,158 @@
 
 **Learning objectives:**
 
-- THESE ARE NICE TO HAVE BUT NOT ABSOLUTELY NECESSARY
+- use headers
+- arrange into columns
+- deploy tab sets
+- create slideshows
 
-## SLIDE 1 {-}
+## Sections
 
-- ADD SLIDES AS SECTIONS (`##`).
-- TRY TO KEEP THEM RELATIVELY SLIDE-LIKE; THESE ARE NOTES, NOT THE BOOK ITSELF.
+We can delineate sections in our presentation using markdown **headers**
+
+```{r}
+#| echo: true
+#| eval: false
+
+# Major League Baseball
+## National League
+### East Division
+#### Philadelphia Phillies
+##### Pitchers
+###### Brad Lidge
+```
+
+## Math (LaTeX)
+
+```{r}
+#| echo: true
+#| eval: false
+
+$$BA = \frac{H}{AB}, \quad ERA = \frac{ER}{IP} \cdot 9$$
+```
+
+$$BA = \frac{H}{AB}, \quad ERA = \frac{ER}{IP} \cdot 9$$
+
+## Columns
+
+```{r}
+#| echo: true
+#| eval: false
+
+:::: {.columns}
+
+::: {.column width="45%"}
+![Brad Lidge](images/Brad_Lidge_Phillies.png)
+:::
+
+::: {.column width="10%"}
+	
+:::
+
+::: {.column width="45%"}
+![Andre Ethier](images/Andre_Ethier_Dodgers.png)
+:::
+
+::::
+```
+
+![columns for layout](images/quarto_column_example.png)
+
+
+## Tabsets
+
+```{r}
+#| echo: true
+#| eval: false
+
+::::: {.panel-tabset}
+
+### Batting
+
+#```{r}
+#Lahman::Batting |>
+#  filter(playerID == "ethiean01")
+#```
+
+### Pitching
+
+#```{r}
+#Lahman::Pitching |>
+#  filter(playerID == "lidgebr01")
+#```
+
+### Fielding
+
+
+#```{r}
+#Lahman::Fielding |>
+#  filter(playerID == "werthja01")
+#```
+
+:::::
+```
+
+![tabset for layout](images/quarto_tabset_example.png)
+
+
+## Callout Boxes
+
+```{r}
+#| echo: true
+#| eval: false
+
+::: {.callout-warning}
+## Brad Lidge
+
+content
+
+:::
+
+::: {.callout-note}
+## Andre Ethier
+
+content
+:::
+```
+
+![callout boxes](images/quarto_callout_example.png)
+
+### Collapsible Callout Boxes
+
+![collapsible callout boxes](images/quarto_collapsible_example_1.png)
+
+```{r}
+#| echo: true
+#| eval: false
+
+::: {.callout-tip collapse="true"}
+## (optional) Obtaining Chadwick IDs
+
+#content
+#```
+
+:::
+```
+
+![collapsible callout boxes](images/quarto_collapsible_example_2.png)
+
+## Slideshows
+
+```{r}
+#| echo: true
+#| eval: false
+
+---
+title: "Andre Ethier versus Brad Lidge"
+author: ""
+date: "2025-07-16"
+format:
+  revealjs:
+    scrollable: true
+    theme: league
+    toc: false
+# format:
+#   html:
+#     toc: true
+---
+```
