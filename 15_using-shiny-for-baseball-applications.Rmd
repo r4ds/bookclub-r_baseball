@@ -2,9 +2,35 @@
 
 **Learning objectives:**
 
-- THESE ARE NICE TO HAVE BUT NOT ABSOLUTELY NECESSARY
+- Basic understanding of how Shiny works
+- Where to go for further learning
 
-## SLIDE 1 {-}
+## Why Shiny {-}
 
-- ADD SLIDES AS SECTIONS (`##`).
-- TRY TO KEEP THEM RELATIVELY SLIDE-LIKE; THESE ARE NOTES, NOT THE BOOK ITSELF.
+- web development in R without HTML, CSS, Javascript
+- easy to get up and running
+- can get more advanced if you want
+
+## Basics of Shiny {-}
+
+- a highly simple version of shiny
+- ui contains all the logic for the interface
+- server contains all the R code for implementing the meat of the app
+- advantage of Shiny is it can be interactive, updating plots, tables, etc.
+- Deploy live version on shinyapps.io, Posit Cloud, Shiny Server, spin up your own server
+
+## Examples {-}
+
+- [Shiny Baseball Gallery](https://bayesball.github.io/shinybaseball/)
+- [Shiny Gallery](https://shiny.posit.co/r/gallery/)
+- [Shiny Live](https://shinylive.io/r/examples/)
+
+## More resources {-}
+
+- [Shiny website](https://shiny.posit.co/)
+- [Shiny cheatsheet](https://rstudio.github.io/cheatsheets/html/shiny.html)
+- [Mastering Shiny](https://mastering-shiny.org/index.html)
+- [Engineering Production-Grade Shiny Apps](https://engineering-shiny.org/index.html)
+- [Awesome Shiny Extensions](https://github.com/nanxstats/awesome-shiny-extensions)
+
+
