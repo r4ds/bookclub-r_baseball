@@ -24,7 +24,8 @@ Imports:
     mgcv,
     remotes,
     rmarkdown,
-    tidyverse
+    tidyverse,
+    zoo
 Remotes: 
     beanumber/abdwr3edata
 Encoding: UTF-8
