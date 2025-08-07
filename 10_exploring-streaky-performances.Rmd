@@ -152,7 +152,7 @@ ichiro_out |>
   dplyr::count()
 ```
 
-### Moving batting averages
+## Moving batting averages
 
 Similar to what we did with DiMaggio, we'll take a look at Ichiro's performance with a 30 at-bat window
 
@@ -173,7 +173,7 @@ moving_average(ichiro_AB, 30) |>
   )
 ```
 
-### Finding slumps for all players
+## Finding slumps for all players
 
 Create a function to find the "Longest 0fer"
 
@@ -227,7 +227,7 @@ reg_streaks |>
   dplyr::slice_head(n = 6)
 ```
 
-### Were Ichiro and Mike Trout unusually streaky?
+## Were Ichiro and Mike Trout unusually streaky?
 
 > One good measure of streakiness or clumpiness in the sequence is the sum of squares of the gaps between successive hits - ABDWR
 
