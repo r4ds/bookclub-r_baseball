@@ -2,9 +2,450 @@
 
 **Learning objectives:**
 
-- THESE ARE NICE TO HAVE BUT NOT ABSOLUTELY NECESSARY
+- Calculate hit streaks
+- Understand if streaks are unusual
+- Look at other measures to understand batter performance
 
-## SLIDE 1 {-}
+## Introduction {-}
 
-- ADD SLIDES AS SECTIONS (`##`).
-- TRY TO KEEP THEM RELATIVELY SLIDE-LIKE; THESE ARE NOTES, NOT THE BOOK ITSELF.
+- Joe DiMaggio's Hitting Streak
+
+![DiMaggio kissing his bat in 1941. Source: Wikipedia](https://upload.wikimedia.org/wikipedia/commons/thumb/6/68/Joe_DiMaggio_salutes_his_bat.jpg/1920px-Joe_DiMaggio_salutes_his_bat.jpg)
+
+## The Great Streak {-}
+
+- play-by-play now available on Retrosheet and downloadable via baseballr package
+- we gather our data from Baseball Reference and book's package
+
+```{r}
+library(abdwr3edata)
+joe <- dimaggio_1941
+
+# Check DiMaggio's batting average for the season
+joe |> dplyr::summarize(AVG = sum(H) / sum(AB))
+```
+
+> A hitting streak is commonly defined as the number of consecutive games in which a player gets at least one base hit. - Analyzing Baseball Data with R
+
+However...
+
+> A consecutive hitting streak shall not be
+terminated if a batter’s plate appearance results in a base on balls, hit batsman,
+defensive interference or obstruction or a sacrifice bunt. A sacrifice fly shall
+terminate the streak - MLB Official Rulebook
+
+```{r}
+joe <- joe |> 
+  dplyr::mutate(had_hit = dplyr::if_else(H > 0, 1, 0))
+
+dplyr::pull(joe, had_hit)
+```
+
+What if we wanted to calculate all the hitting streaks for a particular player?
+
+```{r}
+streaks <- function(y) {
+  x <- rle(y)
+  class(x) <- "list"
+  tibble::as_tibble(x)
+}
+
+joe |> 
+  dplyr::pull(had_hit) |> 
+  streaks() |>
+  dplyr::filter(values == 1) |>
+  dplyr::pull(lengths)
+```
+
+We can also find streaks of no hits. DiMaggio's longest in 1941 was only 3 games
+
+```{r}
+joe |> 
+  dplyr::pull(had_hit) |> 
+  streaks() |>
+  dplyr::filter(values == 0) |>
+  dplyr::pull(lengths)
+```
+
+### Moving Batting Averages
+
+- Suppose we are interested in a player's batting average over a moving window (e.g. a stretch of 10 games 1-10, 2-11, 3-12...)
+- We create a new function `moving_average` featuring `rollmean()` and `rollsum()` from the **zoo** package
+
+```{r}
+# transmute is superseded because you can perform the same job with mutate(.keep = "none").
+
+library(zoo)
+moving_average <- function(df, width) {
+  N <- nrow(df)
+  df |>
+    dplyr::transmute(
+      Game = zoo::rollmean(1:N, k = width, fill = NA), 
+      Average = zoo::rollsum(H, width, fill = NA) /
+        rollsum(AB, width, fill = NA)
+    )
+}
+```
+
+We then calculate a moving average for a 10 game window for Joe DiMaggio and plot this along with his season average as well as games where he recorded a hit.
+
+```{r}
+joe_ma <- moving_average(joe, 10)
+
+ggplot2::ggplot(joe_ma, ggplot2::aes(Game, Average)) +
+  ggplot2::geom_line() +
+  ggplot2::geom_hline(
+    data = dplyr::summarize(joe, bavg = sum(H)/sum(AB)), 
+    ggplot2::aes(yintercept = bavg), color = "red"
+  ) +
+  ggplot2::geom_rug(
+    data = dplyr::filter(joe, had_hit == 1),
+    ggplot2::aes(Rk, .3 * had_hit), sides = "b", 
+    color = "blue"
+  )
+```
+
+
+## Streaks in Individual At-Bats {-}
+
+We can also take a look at streakiness at the at-bat level instead of by game. For this exercise we focus on Ichiro, the true hit king.
+
+```{r}
+load(here::here("data/retro2016.rda"))
+
+ichiro_AB <- retro2016 |>
+  dplyr::filter(bat_id == "suzui001", ab_fl == TRUE)
+```
+
+```{r}
+ichiro_AB <- ichiro_AB |> 
+  dplyr::mutate(
+    H = dplyr::if_else(h_fl > 0, 1, 0),
+    date = stringr::str_sub(game_id, 4, 12),
+    AB = 1
+  ) |> 
+  dplyr::arrange(date)
+```
+
+```{r}
+ichiro_AB |> 
+  dplyr::pull(H) |> 
+  streaks() |>
+  dplyr::filter(values == 1) |>
+  dplyr::pull(lengths)
+```
+
+Most of Ichiro's consecutive hit streaks are 1 with the highest being 5. What if we look at streaks where he goes hitless?
+
+```{r}
+ichiro_out <- ichiro_AB |>
+  dplyr::pull(H) |>
+  streaks() |>
+  dplyr::filter(values == 0)
+ichiro_out |>
+  dplyr::pull(lengths) 
+```
+
+```{r}
+ichiro_out |>
+  dplyr::group_by(lengths) |>
+  dplyr::count()
+```
+
+## Moving batting averages
+
+Similar to what we did with DiMaggio, we'll take a look at Ichiro's performance with a 30 at-bat window
+
+```{r}
+ichiro_H <- ichiro_AB |> 
+  dplyr::mutate(AB_Num = dplyr::row_number()) |> 
+  dplyr::filter(H == 1)
+
+moving_average(ichiro_AB, 30) |> 
+  ggplot2::ggplot(ggplot2::aes(Game, Average)) +
+  ggplot2::geom_line() + ggplot2::xlab("AB") +
+  ggplot2::geom_hline(yintercept = mean(ichiro_AB$H),
+             color = "red") +
+  ggplot2::geom_rug(
+    data = ichiro_H,
+    ggplot2::aes(AB_Num, .3 * H), sides = "b",
+    color = "blue"
+  )
+```
+
+## Finding slumps for all players
+
+Create a function to find the "Longest 0fer"
+
+```{r}
+longest_ofer <- function(batter) {
+  retro2016 |> 
+    dplyr::filter(bat_id == batter, ab_fl == TRUE) |> 
+    dplyr::mutate(
+      H = ifelse(h_fl > 0, 1, 0),
+      date = substr(game_id, 4, 12)
+    ) |> 
+    dplyr::arrange(date) |> 
+    dplyr::pull(H) |> 
+    streaks() |> 
+    dplyr::filter(values == 0) |> 
+    dplyr::summarize(max_streak = max(lengths))
+}
+```
+
+Verify that it works for Ichiro...
+
+```{r}
+longest_ofer("suzui001")
+```
+
+
+Use the function on players with 400 ABs or more
+
+```{r}
+players_400 <- retro2016 |> 
+  dplyr::group_by(bat_id) |> 
+  dplyr::summarize(AB = sum(ab_fl)) |> 
+  dplyr::filter(AB >= 400) |> 
+  dplyr::pull(bat_id)
+reg_streaks <- players_400 |>
+  purrr::set_names() |>
+  purrr::map(longest_ofer) |>
+  purrr::list_rbind() |>
+  dplyr::mutate(bat_id = players_400)
+```
+
+Inner join with Lahman dataset to get names and then look at the longest streaks
+
+```{r}
+library(Lahman)
+reg_streaks |>
+  dplyr::inner_join(People, by = c("bat_id" = "retroID")) |> 
+  dplyr::mutate(Name = paste(nameFirst, nameLast)) |> 
+  dplyr::arrange(desc(max_streak)) |>
+  dplyr::select(Name, max_streak) |>
+  dplyr::slice_head(n = 6)
+```
+
+## Were Ichiro and Mike Trout unusually streaky?
+
+> One good measure of streakiness or clumpiness in the sequence is the sum of squares of the gaps between successive hits - ABDWR
+
+> To illustrate this method, consider a hypothetical player who bats 13 times with the outcomes ...If the player sequence of hit/out outcomes is truly random, then all possible arrangements of the sequence of 6 hits and 7 outs are equally likely. We randomly arrange the sequence 0, 1, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 1, find the gaps, and compute the streakiness measure. This randomization procedure is repeated many times (e.g. 1000 times)
+
+```{r}
+ichiro_S <- ichiro_AB |> 
+  dplyr::pull(H) |>
+  streaks() |> 
+  dplyr::filter(values == 0) |> 
+  dplyr::summarize(C = sum(lengths ^ 2)) |> 
+  dplyr::pull()
+ichiro_S
+```
+
+```{r}
+random_mix <- function(y) {
+  y |> 
+    sample() |> 
+    streaks() |> 
+    dplyr::filter(values == 0) |> 
+    dplyr::summarize(C = sum(lengths ^ 2)) |> 
+    dplyr::pull()
+}
+```
+
+```{r}
+ichiro_random <- 1:1000 |>
+  purrr::map_int(~random_mix(ichiro_AB$H))
+```
+
+Ichiro's line is on the right side suggesting streakiness
+
+```{r}
+ggplot2::ggplot(tibble::enframe(ichiro_random), ggplot2::aes(ichiro_random)) +
+  ggplot2::geom_histogram(
+    ggplot2::aes(y = ggplot2::after_stat(density)), bins = 20, 
+    color = "blue", fill = "white"
+  ) +
+  ggplot2::geom_vline(xintercept = ichiro_S, linewidth = 2) +
+  ggplot2::annotate(
+    geom = "text", x = ichiro_S * 1.15,
+    y = 0.0010, label = "OBSERVED", size = 5
+  ) 
+```
+
+```{r}
+quantile(ichiro_random, probs = 0:10/10)
+```
+
+Create a function for a given playerid
+
+```{r}
+clump_test <- function(data, playerid) {
+  player_ab <- data |>
+    dplyr::filter(bat_id == playerid, ab_fl == TRUE) |> 
+    dplyr::mutate(
+      H = ifelse(h_fl > 0, 1, 0),
+      date = substr(game_id, 4, 12)
+    ) |> 
+    dplyr::arrange(date)
+  
+  stat <- player_ab |>
+    dplyr::pull(H) |>
+    streaks() |> 
+    dplyr::filter(values == 0) |> 
+    dplyr::summarize(C = sum(lengths ^ 2)) |> 
+    dplyr::pull()
+  
+  ST <- 1:1000 |>
+    purrr::map_int(~random_mix(player_ab$H))
+  
+  ggplot2::ggplot(tibble::enframe(ST), ggplot2::aes(ST)) +
+    ggplot2::geom_histogram(
+      ggplot2::aes(y = ggplot2::after_stat(density)), bins = 20, 
+      color = "blue", fill = "white"
+    ) +
+    ggplot2::geom_vline(xintercept = stat, linewidth = 2) +
+    ggplot2::annotate(
+      geom = "text", x = stat * 1.10,
+      y = 0.0010, label = "OBSERVED", size = 5
+    )
+}
+```
+
+Is Mike Trout considered streaky in 2016?
+
+```{r}
+clump_test(retro2016, "troum001")
+```
+
+
+## Local Patterns of Statcast Launch Velocity {-}
+
+```{r}
+sc_2017_ls <- readr::read_rds(here::here("data/statcast_2017.rds"))
+sc_ip2017 <- sc_2017_ls |> 
+  dplyr::filter(type == "X")
+launch_speeds <- sc_ip2017 |> 
+  dplyr::group_by(player_name, game_date) |> 
+  dplyr::arrange(game_date) |> 
+  dplyr::summarize(
+    bip = dplyr::n(), 
+    sum_LS = sum(launch_speed)
+  )
+```
+
+```{r}
+ls_250 <- sc_ip2017 |> 
+  dplyr::group_by(player_name) |> 
+  dplyr::summarize(total_bip = dplyr::n()) |>  
+  dplyr::filter(total_bip >= 250) |>
+  dplyr::inner_join(launch_speeds, by = "player_name")
+```
+
+```{r}
+regroup <- function(data, group_size) {
+  out <- data |>
+    dplyr::mutate(
+      id = dplyr::row_number() - 1,
+      group_id = floor(id / group_size)
+    )
+  # hack to avoid a small leftover bin!
+  if (nrow(data) %% group_size != 0) {
+    max_group_id <- max(out$group_id)
+    out <- out |>
+      dplyr::mutate(
+        group_id = dplyr::if_else(
+          group_id == max_group_id, group_id - 1, group_id
+        )
+      )
+  }
+  out |>
+    dplyr::group_by(group_id) |>
+    dplyr::summarize(
+      G = dplyr::n(), bip = sum(bip), sum_LS = sum(sum_LS)
+    )
+}
+```
+
+We focus on A.J. Pollock's data
+
+```{r}
+aj <- ls_250 |>
+  dplyr::filter(player_name == "A.J. Pollock") |> 
+  dplyr::arrange(game_date)
+aj |>
+  regroup(5)  |> 
+  dplyr::slice_head(n = 5)
+```
+
+```{r}
+summarize_streak_data <- function(data, name, group_size = 5) {
+  data |>
+    dplyr::filter(player_name == name) |> 
+    dplyr::arrange(game_date) |>
+    regroup(group_size) |> 
+    dplyr::summarize(
+      balls_in_play = sum(bip),
+      Mean = mean(sum_LS / bip, na.rm = TRUE),
+      SD = sd(sum_LS / bip, na.rm = TRUE)
+    )
+}
+```
+
+Mean and SD for A.J. Pollock
+
+```{r}
+aj_sum <- summarize_streak_data(ls_250, "A.J. Pollock")
+aj_sum
+```
+
+Let's look at all the players (with at least 250 ABs)
+
+```{r}
+player_list <- ls_250 |>
+  dplyr::pull(player_name) |>
+  unique()
+results <- player_list |>
+  purrr::map(summarize_streak_data, data = ls_250) |>
+  purrr::list_rbind() |>
+  dplyr::mutate(Player = player_list)
+```
+
+
+```{r}
+library(ggrepel)
+ggplot2::ggplot(results, ggplot2::aes(Mean, SD)) +
+  ggplot2::geom_point() +
+  ggrepel::geom_label_repel(
+    data = dplyr::filter(results, SD > 5.63 | SD < 2.3 ),
+    ggplot2::aes(label = Player)
+  )
+```
+
+A new function to get average launch speed over a given game window
+
+```{r}
+get_streak_data <- function(data, name, group_size = 5) {
+  data |>
+    dplyr::filter(player_name == name) |> 
+    dplyr::arrange(game_date) |>
+    regroup(group_size) |> 
+    dplyr::mutate(
+      launch_speed_avg = sum_LS / bip,
+      Period = dplyr::row_number()
+    )
+}
+```
+
+```{r, eval=FALSE}
+streaky <- c("Michael Conforto", "Dexter Fowler") |>
+  purrr::set_names() |>
+  purrr::map(get_streak_data, data = ls_250) |>
+  purrr::list_rbind(names_to = "Player")
+
+ggplot2::ggplot(streaky, ggplot2::aes(Period, launch_speed_avg)) +
+  ggplot2::geom_line(linewidth = 1) + 
+  ggplot2::facet_wrap(vars(Player), ncol = 1)
+```
+
